@@ -17,6 +17,7 @@ import { v_flex, h_flex, TextareaState, Textarea, InputState, Input, Scrollbar, 
 import { spaces, panes, focused, exec, watchFolder, theme, settings, notify, shared, setShared, openOverlay, run, props, nextCommand, window as appWindow } from "herdr";
 import * as G from "./git.js";
 import * as Apps from "./apps.js";
+import * as AI from "./aimsg.js";
 import { icon, menuHeight } from "./menu.js";
 import { showInTab, shownIn, shownSource, getLayout, setLayout } from "./diff.js";
 import { History } from "./history.js";
@@ -99,6 +100,8 @@ export class Panel {
     this.tab = props()?.tab ?? localStorage.getItem("tab") ?? "changes";
     this.collapsed = JSON.parse(localStorage.getItem("collapsed") ?? "{}");
     this.signoff = localStorage.getItem("signoff") === "1";
+    try { this.ai = AI.normalizeAi(JSON.parse(localStorage.getItem("ai") ?? "null")); } catch { this.ai = AI.normalizeAi(null); }
+    this.aiBusy = false;
     this.message = ""; this.menuActions = {}; this.menuSerial = 0;
     this.pickSeen = shared("git-changes.pick")?.at; this.seenChange = shared("git-graph.changed");
     this.handle = cx.focus_handle();
@@ -277,6 +280,54 @@ export class Panel {
   clearMessage() { this.message = ""; this.editor.set_value(""); this.amend = false; }
   mode() { return G.commitMode(this.entries); }
   suggestion() { return G.suggestMessage(this.entries); }
+
+  setAi(patch, cx) {
+    this.ai = AI.normalizeAi({ ...this.ai, ...patch });
+    localStorage.setItem("ai", JSON.stringify(this.ai));
+    cx.notify();
+  }
+
+  // Asks the chosen agent's CLI for a message from the staged diff (or every tracked
+  // change when nothing is staged) and drops it into the box. Never commits.
+  generateMessage(cx) {
+    if (this.aiBusy || this.busy || this.loading || !this.root) return;
+    const mode = this.mode();
+    if (mode !== "staged" && mode !== "tracked") return this.fail(cx, "Stage the files to describe first");
+    const root = this.root, on = this.on, context = this.context, version = this.contextVersion, hasHead = this.hasHead, ai = this.ai;
+    const current = () => this.contextVersion === version && key() === context;
+    this.aiBusy = true; this.note = null;
+    cx.spawn(async (cx) => {
+      try {
+        const diff = await exec("git", [...G.READ, ...AI.diffArgs(mode, hasHead)], { cwd: root, on });
+        if (diff.code !== 0) throw new Error(G.gitError(diff));
+        if (!diff.stdout.trim()) throw new Error("No changes to describe");
+        const log = hasHead ? await exec("git", [...G.READ, "log", "-5", "--format=%s"], { cwd: root, on }).catch(() => null) : null;
+        const prompt = AI.buildPrompt(diff.stdout, { recent: log?.code === 0 ? log.stdout.trim() : "" });
+        const r = await exec(AI.AGENTS[ai.agent].command, AI.agentArgs(ai, prompt), { cwd: root, on, timeout: 120000 });
+        if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim().split("\n").slice(-2).join(" ") || `${ai.agent} exited ${r.code}`);
+        const text = AI.cleanMessage(r.stdout);
+        if (!text) throw new Error(`${AI.AGENTS[ai.agent].label} returned nothing`);
+        if (current() && !this.message.trim()) { this.message = text; this.editor.set_value(text); }
+        else if (current()) notify({ title: "Generated message (box not empty, not applied)", body: text, level: "info", timeout: 8000 });
+      } catch (e) {
+        if (current()) this.note = `Generate message failed: ${String(e?.message ?? e)}`;
+      } finally {
+        this.aiBusy = false; cx.notify();
+      }
+    });
+    cx.notify();
+  }
+
+  aiMenu(cx) {
+    const a = AI.AGENTS[this.ai.agent];
+    this.menu([
+      ...Object.entries(AI.AGENTS).map(([id, v]) => ({ label: v.label, check: this.ai.agent === id, run: (cx) => this.setAi({ agent: id, model: AI.AGENTS[id].models[0], effort: "" }, cx) })),
+      { separator: true },
+      ...a.models.map((m) => ({ label: `Model: ${m || "default"}`, check: this.ai.model === m, run: (cx) => this.setAi({ model: m }, cx) })),
+      { separator: true },
+      ...a.efforts.map((e) => ({ label: `Effort: ${e || "default"}`, check: this.ai.effort === e, run: (cx) => this.setAi({ effort: e }, cx) })),
+    ], cx);
+  }
 
   commit(cx, push) {
     if (this.busy || this.loading) return;
@@ -977,6 +1028,8 @@ export class Panel {
         .when(this.amend, (e) => e.child(div().px(6).py(1).rounded(4).bg(t.accent + "22").text_size(11).text_color(t.accent).child("amend")))
         .when(this.signoff, (e) => e.child(div().px(6).py(1).rounded(4).bg(t.raised).text_size(11).text_color(t.muted).child("signoff")))
         .child(div().flex_1())
+        .child(this.iconButton("ai-message", "sparkles", `Generate a message with ${AI.AGENTS[this.ai.agent].label}${this.ai.model ? ` (${this.ai.model})` : ""}`, (cx) => this.generateMessage(cx), t, { label: this.aiBusy ? "Writing…" : null, disabled: this.aiBusy || busy || (mode !== "staged" && mode !== "tracked") }))
+        .child(this.iconButton("ai-settings", "sliders", "Choose the agent, model and effort for generated messages", (cx) => this.aiMenu(cx), t))
         .child(this.split("commit", label, t, { primary: true, enabled: canCommit, tip, onClick: (cx) => this.commit(cx, false), onMenu: (cx) => this.commitOptions(cx) })));
   }
 

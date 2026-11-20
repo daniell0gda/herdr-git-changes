@@ -220,6 +220,14 @@ the next click.
   Force push (with lease).
 - **The message box** is multi-line. ⌘↩ commits. With one changed file it
   suggests a message, as Zed does (`Update store.ts`).
+- **Generate a message (✨):** asks a coding agent's CLI to write the message
+  from the staged diff (every tracked change when nothing is staged) and puts
+  it in the box. It never commits, and it doesn't overwrite a message you've
+  typed. The sliders button next to it picks the agent (Claude Code, Hermes or
+  Codex), the model and the effort; the choice is remembered. It runs a fresh
+  one-shot command (`claude -p`, `hermes -z`, `codex exec`) with the diff,
+  cut to 12,000 characters, and your last five commit subjects in the prompt.
+  The agent's CLI must be installed on the repository's machine.
 - **Commit or Commit Tracked:** the button commits what's staged. When nothing
   is staged it reads *Commit Tracked* and runs `git commit -a`. Its ⌄ menu has
   Amend (pre-filled with the last message), Signoff, Commit & push, Stash all
@@ -480,6 +488,7 @@ Files in `mods/git-changes/`:
 | `mermaid.js` | Finds the Mermaid blocks in Markdown and draws each with the Mermaid CLI. |
 | `comments.js` | Comment threads: pinning a comment to its line, saving them in the git folder, and asking a fork of the Claude Code session. |
 | `syntax.js` | Syntax colors: a file's language from its extension, and each diff line split into colored tokens. No Herdr imports. |
+| `aimsg.js` | The generated commit message: the agent, model and effort choices, the prompt, each agent's arguments and the cleanup of its reply. No Herdr imports. |
 | `menu.js` | The dropdown and right-click menus, shown as popups. |
 | `git.js` | Parsing git's output, the folder tree, pairing lines for two columns, finding the images in a diff, and the argv behind every action. No Herdr imports, so node can test it. |
 
