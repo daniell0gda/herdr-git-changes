@@ -55,15 +55,16 @@ export class Menu {
       .children(this.items.map((it, i) => {
         if (it.separator) return div().mx(7).my(4).h(1).flex_none().bg(t.border);
         const confirm = this.confirming === i, color = it.disabled ? t.dim : it.danger ? t.ansi1 : t.foreground;
+        const iconColor = it.disabled ? t.dim : it.tone ? (t[it.tone] ?? t.muted) : it.danger ? t.ansi1 : t.muted;
         return h_flex().id(`gcm-${i}`).h(28).flex_none().px(8).gap(9).rounded(6).items_center().text_color(color)
           .when(!it.disabled, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover)))
           .when(i === this.at || confirm, (el) => el.bg(confirm ? t.ansi1 + "22" : t.selected))
           .on_click((_e, cx) => this.choose(i, cx))
           .child(it.check !== undefined
             ? div().w(14).flex_none().text_color(t.accent).child(it.check ? "✓" : "")
-            : svg(icon(it.icon ?? "commit")).size(14).flex_none().text_color(it.disabled ? t.dim : it.danger ? t.ansi1 : t.muted))
+            : svg(icon(it.icon ?? "commit")).size(14).flex_none().text_color(iconColor))
           .child(div().flex_1().min_w(0).truncate().child(confirm ? `Click again: ${it.label}` : it.label))
-          .when(Boolean(it.hint), (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(it.hint)));
+          .when(Boolean(it.hint), (el) => el.child(div().flex_none().text_size(11).text_color(it.tone ? iconColor : t.dim).child(it.hint)));
       }));
   }
 }

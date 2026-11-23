@@ -2,5 +2,5 @@
   "name": "herdr-git-changes",
   "private": true,
   "type": "module",
-  "scripts": { "test": "node tests/git.test.mjs && node tests/rows.test.mjs && node tests/syntax.test.mjs && node tests/aimsg.test.mjs && node tests/ui.test.mjs" }
+  "scripts": { "test": "node tests/git.test.mjs && node tests/rows.test.mjs && node tests/syntax.test.mjs && node tests/aimsg.test.mjs && node tests/forge.test.mjs && node tests/ui.test.mjs" }
 }

@@ -7,11 +7,12 @@ import { props } from "herdr";
 import { Panel } from "./panel.js";
 import { Menu } from "./menu.js";
 import { DiffView } from "./diff.js";
+import { ForgeView } from "./forge-view.js";
 
 export default class GitChanges extends View {
   init(_props, cx) {
     const role = props()?.role;
-    this.part = role === "menu" ? new Menu() : role === "diff" ? new DiffView() : new Panel();
+    this.part = role === "menu" ? new Menu() : role === "diff" ? new DiffView() : role === "forge" ? new ForgeView() : new Panel();
     this.part.init(cx);
   }
 

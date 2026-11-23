@@ -18,8 +18,10 @@ import { spaces, panes, focused, exec, watchFolder, theme, settings, notify, sha
 import * as G from "./git.js";
 import * as Apps from "./apps.js";
 import * as AI from "./aimsg.js";
+import * as F from "./forge.js";
 import { icon, menuHeight } from "./menu.js";
 import { showInTab, shownIn, shownSource, getLayout, setLayout } from "./diff.js";
+import { showForgeInTab, openExternal } from "./forge-view.js";
 import { History } from "./history.js";
 import { ROW, OUTER, START, PAD, INDENT, BOX, ACTION, COUNT, COUNT_GAP, BRANCH, FOLDABLE, buildRows, buildBranchRows, filesInside, matchingPath, isFolded, stepIndex, zoneAt } from "./rows.js";
 
@@ -31,7 +33,7 @@ function location() {
   const pane = f?.pane ? panes().find((p) => p.pane === f.pane) : null;
   // The diff tab is a mod pane with no folder: keep showing the repository it shows.
   if (pane?.mod === "git-changes") {
-    const shown = shownSource(space?.id);
+    const shown = shownSource(space?.id) ?? (shared("git-changes.forgeView") ?? {})[space?.id]?.source;
     if (shown) return { cwd: shown.root, on: shown.on ?? null };
   }
   const on = f?.pane === null ? (f.terminal?.includes("/") ? f.terminal.split("/")[0] : null) : space?.machine ?? null;
@@ -67,20 +69,26 @@ async function baseCandidates(git) {
   }));
 }
 
-/** What the Repo tab lists: every file the branch's commits changed since it left its base, or why there's nothing to compare. */
-async function readBranchFiles(git, status) {
-  const head = status.branch.oid;
+/** What the Repo tab lists: every file changed between base and head (auto-detected base..HEAD, or any two chosen branches). */
+async function readBranchFiles(git, status, { baseOverride = null, headOverride = null } = {}) {
+  let head = status.branch.oid;
+  if (headOverride) {
+    const resolved = await git(["rev-parse", "--verify", headOverride]);
+    if (resolved.code !== 0) return failedRead(`Unknown branch ${headOverride}`);
+    head = resolved.stdout.trim();
+  }
   if (!head) return failedRead("No commits yet");
-  const base = G.nearestBase(await baseCandidates(git), status.branch.head);
+  const base = baseOverride || G.nearestBase(await baseCandidates(git), status.branch.head);
   if (!base) return failedRead("No main, master, develop or release branch to compare with");
-  const found = await git(G.mergeBaseArgs(base));
+  const found = await git(["merge-base", base, head]);
   if (found.code !== 0) return failedRead(`No commit in common with ${base}`, base);
   const mergeBase = found.stdout.trim();
   const [names, stats] = await Promise.all([git(G.baseNameStatusArgs(mergeBase, head)), git(G.baseNumstatArgs(mergeBase, head))]);
   if (names.code !== 0) throw new Error(G.gitError(names));
   const numstat = stats.code === 0 ? stats.stdout : "", entries = G.branchEntries(names.stdout, numstat);
-  return { base, mergeBase, head, entries: entries.slice(0, G.LIMIT), limited: entries.length > G.LIMIT,
-    signature: [base, mergeBase, head, names.stdout, numstat].join("\x1f") };
+  const label = headOverride ? `${base}..${headOverride}` : base;
+  return { base: label, baseRef: base, headRef: headOverride || status.branch.head || "HEAD", mergeBase, head, entries: entries.slice(0, G.LIMIT), limited: entries.length > G.LIMIT,
+    signature: [label, mergeBase, head, names.stdout, numstat].join("\x1f") };
 }
 
 export class Panel {
@@ -91,8 +99,12 @@ export class Panel {
     this.changesScroll = VirtualListScrollHandle.new(); this.repoScroll = VirtualListScrollHandle.new();
     this.cursor = {};
     this.repo = null; this.repoModel = null;
+    this.compareBase = null; this.compareHead = null;
     this.model = null; this.press = null; this.signature = null;
     this.entries = []; this.stashes = []; this.remotes = []; this.last = null;
+    this.forge = null; this.showForge = localStorage.getItem("forgeTabs") !== "0";
+    this.forgeState = "open"; this.forgeLabel = null; this.forgeCache = {}; this.forgeLoading = false; this.forgeError = null;
+    this.ci = null; this.ciKey = null; this.ciAt = 0; this.ciLoading = false;
     this.history = new History(); this.panelWidth = 400;
     this.branch = null;
     this.listMode = localStorage.getItem("list") === "flat" ? "flat" : "tree";
@@ -143,8 +155,10 @@ export class Panel {
   reset() {
     this.menuActions = {}; this.armed = null;
     this.root = null; this.branch = null; this.entries = []; this.stashes = []; this.last = null; this.history.clear();
+    this.forge = null; this.forgeLabel = null; this.forgeCache = {}; this.forgeLoading = false; this.forgeError = null;
+    this.ci = null; this.ciKey = null; this.ciAt = 0; this.ciLoading = false;
     this.limited = false; this.model = null; this.signature = null; this.press = null;
-    this.repo = null; this.repoModel = null;
+    this.repo = null; this.repoModel = null; this.compareBase = null; this.compareHead = null;
   }
 
   /** Keeps the Repo tab's new read; false when it's the same as the last one. */
@@ -174,18 +188,18 @@ export class Panel {
         const status = await git(G.STATUS);
         if (status.code !== 0) throw new Error(G.gitError(status));
         const s = G.parseStatus(status.stdout), hasHead = Boolean(s.branch.oid);
-        const [stats, stash, remote, last] = await Promise.all([
+        const [stats, stash, remote, remoteUrls, last] = await Promise.all([
           hasHead ? git(["diff", "HEAD", ...G.NUMSTAT]).then((r) => [r]) : Promise.all([git(["diff", "--cached", ...G.NUMSTAT]), git(["diff", ...G.NUMSTAT])]),
-          git(G.STASHES), git(["remote"]),
+          git(G.STASHES), git(["remote"]), git(["remote", "-v"]),
           hasHead ? git(G.historyArgs({ all: false, limit: 1 })) : null]);
         if (key() !== context) return;
         // The graph is read only while it shows; switching to it reads it.
         const historyMoved = this.tab === "history" && await this.history.read(git, { changes: s.entries.length, head: s.branch.oid, upstream: s.branch.upstream });
         if (key() !== context) return;
-        const repoRead = this.tab === "repo" ? await readBranchFiles(git, s) : null;
+        const repoRead = this.tab === "repo" ? await readBranchFiles(git, s, { baseOverride: this.compareBase, headOverride: this.compareHead }) : null;
         if (key() !== context) return;
         const repoMoved = Boolean(repoRead) && this.takeRepo(repoRead);
-        const signature = [status.stdout, ...stats.map((r) => r.stdout), stash.stdout, remote.stdout, last?.stdout ?? "", Math.floor(Date.now() / 60000)].join("\x1f");
+        const signature = [status.stdout, ...stats.map((r) => r.stdout), stash.stdout, remote.stdout, remoteUrls.stdout, last?.stdout ?? "", Math.floor(Date.now() / 60000)].join("\x1f");
         if (!historyMoved && !repoMoved && signature === this.signature && this.root === root && !this.error) { changed = false; return; }
         this.signature = signature;
         const numstat = G.parseNumstat(...stats.filter((r) => r.code === 0).map((r) => r.stdout));
@@ -195,9 +209,15 @@ export class Panel {
         this.root = root; this.on = on; this.branch = s.branch; this.hasHead = hasHead;
         this.stashes = stash.code === 0 ? G.parseStashes(stash.stdout).map((x) => ({ ...x, area: "stash" })) : [];
         this.remotes = remote.code === 0 ? remote.stdout.split("\n").filter(Boolean) : [];
+        this.forge = remoteUrls.code === 0 ? F.detectForgeFromRemotes(remoteUrls.stdout) : null;
+        if ((!this.forge || !this.showForge) && (this.tab === "reviews" || this.tab === "issues")) this.tab = "changes";
         this.last = last?.code === 0 ? G.parseLog(last.stdout).map((c) => ({ ...c, area: "commit" }))[0] ?? null : null;
         this.error = null;
         this.watch(root, cx);
+        if (this.forge && this.showForge) {
+          this.refreshBranchCi(cx);
+          if (this.tab === "reviews" || this.tab === "issues") this.loadForgeList(cx);
+        }
       } catch (e) { if (key() === context) this.error = String(e?.message ?? e); }
       finally {
         this.loading = false; if (changed) cx.notify();
@@ -244,7 +264,89 @@ export class Panel {
   setTab(tab, cx) {
     if (this.tab === tab) return;
     this.tab = tab; localStorage.setItem("tab", tab);
-    this.refresh(cx); cx.notify();
+    if (tab === "reviews" || tab === "issues") this.loadForgeList(cx);
+    else this.refresh(cx);
+    cx.notify();
+  }
+
+  toggleForgeTabs(cx) {
+    this.showForge = !this.showForge;
+    localStorage.setItem("forgeTabs", this.showForge ? "1" : "0");
+    if (!this.showForge && (this.tab === "reviews" || this.tab === "issues")) { this.tab = "changes"; localStorage.setItem("tab", "changes"); }
+    if (this.showForge && this.forge) this.refreshBranchCi(cx, true);
+    cx.notify();
+  }
+
+  refreshBranchCi(cx, force = false) {
+    if (!this.forge || !this.showForge || !this.branch?.head || this.branch.detached) {
+      if (this.ci) { this.ci = null; this.ciKey = null; }
+      return;
+    }
+    const ciKey = `${this.root}:${this.branch.head}:${this.branch.oid ?? ""}`;
+    if (!force && this.ciKey === ciKey && Date.now() - this.ciAt < 60000) return;
+    if (this.ciKey !== ciKey) { this.ci = null; this.ciKey = ciKey; this.ciAt = 0; }
+    if (this.ciLoading && this.ciLoadingKey === ciKey) return;
+    this.ciLoading = true; this.ciLoadingKey = ciKey;
+    const { root, on, forge } = this, branch = this.branch.head, oid = this.branch.oid ?? null, context = this.context;
+    cx.spawn(async (cx) => {
+      try {
+        const ci = await F.loadBranchCi(exec, forge, branch, { cwd: root, on }, oid);
+        if (this.context !== context || this.ciKey !== ciKey) return;
+        this.ci = ci; this.ciAt = Date.now();
+      } catch {
+        if (this.context === context && this.ciKey === ciKey) { this.ci = null; this.ciAt = Date.now(); }
+      } finally {
+        if (this.context === context && this.ciLoadingKey === ciKey) { this.ciLoading = false; cx.notify(); }
+      }
+    });
+  }
+
+  loadForgeList(cx, force = false) {
+    const kind = this.tab === "issues" ? "issues" : "reviews";
+    if (!this.forge || !this.root) return;
+    const cacheKey = `${this.root}:${kind}:${this.forgeState}`;
+    if (!force && this.forgeCache[cacheKey]) { this.forgeError = null; return; }
+    this.forgeLoading = true; this.forgeError = null;
+    const { root, on, forge } = this, state = this.forgeState, context = this.context;
+    cx.spawn(async (cx) => {
+      try {
+        const items = kind === "reviews"
+          ? await F.listReviews(exec, forge, state, { cwd: root, on })
+          : await F.listIssues(exec, forge, state, { cwd: root, on });
+        if (this.context !== context) return;
+        this.forgeCache[cacheKey] = items;
+        this.forgeError = null;
+      } catch (e) {
+        if (this.context === context) this.forgeError = String(e?.message ?? e);
+      } finally {
+        if (this.context === context) { this.forgeLoading = false; cx.notify(); }
+      }
+    });
+  }
+
+  pickForge(item, cx) {
+    const space = spaces().find((sp) => sp.active);
+    if (!space || !this.root || !this.forge) return;
+    showForgeInTab(space.id, item, { root: this.root, on: this.on ?? null, forge: this.forge });
+    cx.notify();
+  }
+
+  ciMenu(cx) {
+    const ci = this.ci;
+    const jobs = (ci?.jobs ?? []).map((j) => ({
+      label: j.name,
+      icon: j.state === "pass" ? "check" : j.state === "fail" ? "x" : j.state === "running" ? "refresh" : "commit",
+      tone: j.state === "pass" ? "ansi2" : j.state === "fail" ? "ansi1" : j.state === "running" ? "ansi3" : "muted",
+      hint: j.state,
+      run: (cx) => this.pickForge({ kind: "ci", ...j }, cx),
+    }));
+    const firstUrl = (ci?.jobs ?? []).find((j) => j.state === "fail" && j.url)?.url ?? (ci?.jobs ?? []).find((j) => j.url)?.url;
+    this.menu([
+      ...(jobs.length ? jobs : [{ label: ci?.summary || "No CI runs", disabled: true }]),
+      { separator: true },
+      ...(firstUrl ? [{ label: "Open in browser ↗", icon: "cloud", run: () => openExternal(firstUrl) }] : []),
+      { label: "Refresh CI status", icon: "refresh", run: (cx) => this.refreshBranchCi(cx, true) },
+    ], cx);
   }
 
   // --- acting -----------------------------------------------------------------
@@ -620,6 +722,7 @@ export class Panel {
       { separator: true },
       { label: "Discard tracked changes", icon: "undo", danger: true, disabled: !tracked, run: (cx) => this.act(cx, "Discard", G.discardTrackedArgs(this.hasHead)) },
       { label: "Trash untracked files", icon: "trash", danger: true, disabled: !untracked, run: (cx) => this.act(cx, "Trash", G.trashUntrackedArgs()) },
+      ...(this.forge ? [{ separator: true }, { label: this.showForge ? `Hide ${this.forge.label} & Issues tabs` : `Show ${this.forge.label} & Issues tabs`, icon: "cloud", run: (cx) => this.toggleForgeTabs(cx) }] : []),
     ], cx);
   }
 
@@ -981,13 +1084,110 @@ export class Panel {
   }
 
   tabs(t) {
-    const tab = (id, label) => div().id(`tab-${id}`).flex_1().h_full().flex().items_center().justify_center().cursor_pointer().text_size(13)
+    const tab = (id, label) => div().id(`tab-${id}`).flex_1().h_full().flex().items_center().justify_center().cursor_pointer().text_size(12.5)
       .text_color(this.tab === id ? t.foreground : t.muted).when(this.tab === id, (e) => e.border_b(2).border_color(t.accent)).hover((s) => s.text_color(t.foreground))
       .on_click((_e, cx) => this.setTab(id, cx)).child(label);
     return h_flex().h(34).flex_none().border_b(1).border_color(t.border)
       .child(tab("changes", this.entries.length ? `Changes (${this.entries.length})` : "Changes"))
       .child(tab("repo", "Repo"))
-      .child(tab("history", "History"));
+      .child(tab("history", "History"))
+      .when(Boolean(this.forge && this.showForge), (e) => e
+        .child(tab("reviews", this.forge.label))
+        .child(tab("issues", "Issues")));
+  }
+
+  forgeRawItems() {
+    const kind = this.tab === "issues" ? "issues" : "reviews";
+    return this.forgeCache[`${this.root}:${kind}:${this.forgeState}`] ?? [];
+  }
+
+  forgeItems() {
+    let list = this.forgeRawItems();
+    if (this.forgeLabel) list = list.filter((it) => (it.labels ?? []).includes(this.forgeLabel));
+    const q = this.filter.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter((it) => `#${it.number} ${it.title} ${it.author} ${(it.labels ?? []).join(" ")}`.toLowerCase().includes(q));
+  }
+
+  forgeLabelMenu(cx) {
+    const counts = new Map();
+    for (const it of this.forgeRawItems()) for (const l of it.labels ?? []) counts.set(l, (counts.get(l) ?? 0) + 1);
+    const labels = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    this.menu([
+      { label: "All labels", check: !this.forgeLabel, run: () => { this.forgeLabel = null; } },
+      ...(labels.length ? [{ separator: true }, ...labels.map(([l, n]) => ({
+        label: l, hint: String(n), check: this.forgeLabel === l,
+        run: () => { this.forgeLabel = this.forgeLabel === l ? null : l; },
+      }))] : []),
+    ], cx);
+  }
+
+  forgeToolbar(t) {
+    const segment = (id, text, state) => {
+      const on = this.forgeState === state;
+      return div().id(id).h(20).px(8).flex().items_center().rounded(5).text_size(11.5).cursor_pointer()
+        .text_color(on ? t.foreground : t.muted).when(on, (e) => e.bg(t.raised).border_1().border_color(t.border))
+        .hover((s) => s.text_color(t.foreground)).on_click((_e, cx) => { if (!on) { this.forgeState = state; this.forgeLabel = null; this.loadForgeList(cx); cx.notify(); } }).child(text);
+    };
+    const count = this.forgeItems().length;
+    return h_flex().h(32).flex_none().px(8).gap(6).items_center().border_b(1).border_color(t.border)
+      .child(h_flex().p(2).gap(2).rounded(7).border_1().border_color(t.border)
+        .child(segment("forge-open", "Open", "open"))
+        .child(segment("forge-closed", "Closed", "closed")))
+      .child(h_flex().id("forge-label-filter").h(22).px(7).gap(4).items_center().rounded(5).border_1()
+        .border_color(this.forgeLabel ? t.accent + "66" : t.border).bg(this.forgeLabel ? t.accent + "1a" : t.background)
+        .cursor_pointer().text_size(11).text_color(this.forgeLabel ? t.accent : t.muted).hover((s) => s.bg(t.hover))
+        .tooltip("Filter by label")
+        .on_click((_e, cx) => this.forgeLabelMenu(cx))
+        .child(svg(icon("tag")).size(11).flex_none())
+        .child(div().max_w(80).truncate().child(this.forgeLabel || "Label")))
+      .child(div().flex_1().text_right().text_size(11).text_color(t.dim).child(this.forgeLoading ? "Loading…" : `${count}`))
+      .child(this.iconButton("refresh-forge", "refresh", "Refresh", (cx) => this.loadForgeList(cx, true), t, { disabled: this.forgeLoading }));
+  }
+
+  forgeView(t) {
+    if (this.forgeError) return div().flex_1().p(12).text_size(12).text_color(t.ansi1).child(this.forgeError);
+    const items = this.forgeItems();
+    if (this.forgeLoading && !items.length) return div().flex_1().p(12).text_size(12).text_color(t.dim).child(`Loading ${this.tab === "issues" ? "issues" : this.forge?.label ?? "PRs"}…`);
+    if (!items.length) return div().flex_1().p(12).text_size(12).text_color(t.dim).child(`No ${this.forgeState} ${this.tab === "issues" ? "issues" : this.forge?.label ?? "PRs"}.`);
+    const prefix = this.tab === "reviews" && this.forge?.singular === "MR" ? "!" : "#";
+    const ciDot = (state) => (state === "pass" ? { text: "✓", color: t.ansi2 } : state === "fail" ? { text: "✗", color: t.ansi1 } : state === "running" ? { text: "●", color: t.ansi3 ?? t.accent } : null);
+    return v_flex().id(`gc-forge-list-${this.tab}`).flex_1().min_h(0).overflow_y_scrollbar().p(6).gap(4)
+      .children(items.map((it) => {
+        const dot = it.kind === "review" ? ciDot(it.ciState) : null;
+        const meta = [
+          it.author ? `@${it.author}` : "",
+          it.head ? it.head : "",
+          it.assignees?.length ? `→ ${it.assignees.map((a) => `@${a}`).join(", ")}` : "",
+          it.commentCount ? `💬 ${it.commentCount}` : "",
+        ].filter(Boolean).join(" · ");
+        return v_flex().id(`forge-${it.kind}-${it.number}`).px(8).py(6).gap(2).rounded(6).cursor_pointer().border_1().border_color(t.border).bg(t.raised)
+          .hover((s) => s.bg(t.hover))
+          .on_click((_e, cx) => this.pickForge(it, cx))
+          .child(h_flex().gap(6).items_center()
+            .child(div().flex_none().text_size(11.5).font_semibold().text_color(it.draft ? t.dim : t.accent).child(`${prefix}${it.number}`))
+            .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.foreground).child(it.title))
+            .when(Boolean(dot), (e) => e.child(div().flex_none().text_size(11).text_color(dot.color).child(dot.text))))
+          .when(Boolean(meta), (e) => e.child(div().truncate().text_size(11).text_color(t.dim).child(meta)))
+          .when(Boolean(it.labels?.length), (e) => e.child(h_flex().gap(4).flex_wrap().pt(2)
+            .children(it.labels.slice(0, 5).map((l, li) => div().id(`forge-${it.kind}-${it.number}-lbl-${li}`).px(5).py(1).rounded(4)
+              .bg(this.forgeLabel === l ? t.accent + "33" : t.accent + "1a").text_size(10.5).text_color(t.accent).cursor_pointer()
+              .on_click((_e, cx) => { cx.stop_propagation(); this.forgeLabel = this.forgeLabel === l ? null : l; cx.notify(); })
+              .child(l)))));
+      }));
+  }
+
+  ciChip(t) {
+    const ci = this.ci;
+    if (!this.forge || !this.showForge || !ci || ci.state === "none") return null;
+    const color = ci.state === "pass" ? t.ansi2 : ci.state === "fail" ? t.ansi1 : t.ansi3 ?? t.accent;
+    const glyph = ci.state === "pass" ? "✓" : ci.state === "fail" ? "✗" : "●";
+    return h_flex().id("gc-ci-chip").h(22).px(6).gap(4).flex_none().items_center().rounded(5).border_1().border_color(color + "55").bg(color + "18")
+      .cursor_pointer().text_size(11).text_color(color).tooltip(`CI: ${ci.summary}`)
+      .hover((s) => s.bg(color + "2a"))
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_click((_e, cx) => { cx.stop_propagation(); this.ciMenu(cx); })
+      .child(glyph).child("CI");
   }
 
   lineCounts(entries, t) {
@@ -1003,19 +1203,53 @@ export class Panel {
     ];
   }
 
+  compareMenu(which, cx) {
+    if (!this.root) return;
+    const { root, on } = this;
+    cx.spawn(async (cx) => {
+      const r = await exec("git", [...G.READ, "for-each-ref", "--sort=-committerdate", "--format=%(refname:short)", "refs/heads", "refs/remotes"], { cwd: root, on });
+      const refs = r.code === 0 ? r.stdout.split("\n").map((s) => s.trim()).filter((s) => s && !s.endsWith("/HEAD")).slice(0, 35) : [];
+      const current = which === "base" ? this.compareBase : this.compareHead;
+      const pick = (val, cx) => {
+        if (which === "base") this.compareBase = val;
+        else this.compareHead = val;
+        this.repo = null; this.repoModel = null;
+        this.refresh(cx); cx.notify();
+      };
+      this.menu([
+        { label: which === "base" ? "Auto base" : "Current (HEAD)", check: !current, run: (cx) => pick(null, cx) },
+        { separator: true },
+        ...refs.map((ref) => ({ label: ref, check: current === ref, run: (cx) => pick(ref, cx) })),
+      ], cx);
+    });
+  }
+
   repoToolbar(t) {
     const repo = this.repo, entries = repo?.entries ?? [], any = entries.length > 0 && Boolean(repo.mergeBase);
-    return h_flex().h(32).flex_none().px(8).gap(4).items_center().border_b(1).border_color(t.border)
-      .child(this.iconButton("view-diff-base", "diff", repo?.base ? `Show every change since ${repo.base} in the main area` : "Show every change of the branch",
-        (cx) => this.pickBranch({ area: "base" }, cx), t, { label: "View Diff", disabled: !any }))
-      .when(any, (e) => e.child(this.lineCounts(entries, t)))
-      .child(div().flex_1().min_w(0).truncate().text_right().text_size(11).text_color(t.dim).child(repo?.base ? `${entries.length} since ${repo.base}` : ""))
-      .children(this.viewSwitches(t))
-      .child(this.iconButton("refresh-repo", "refresh", "Refresh", (cx) => this.refresh(cx), t, { disabled: Boolean(this.busy) }));
+    const chip = (id, label, tip, which) => h_flex().id(id).h(22).px(6).gap(3).flex_none().items_center().rounded(5).border_1().border_color(t.border).bg(t.background)
+      .cursor_pointer().text_size(11).text_color(t.foreground).hover((s) => s.bg(t.hover)).tooltip(tip)
+      .on_click((_e, cx) => this.compareMenu(which, cx))
+      .child(div().max_w(90).truncate().child(label))
+      .child(svg(icon("chevron-down")).size(10).flex_none().text_color(t.dim));
+    return v_flex().flex_none().border_b(1).border_color(t.border)
+      .child(h_flex().h(30).px(8).gap(4).items_center()
+        .child(div().text_size(11).text_color(t.dim).child("Compare:"))
+        .child(chip("repo-base", this.compareBase || repo?.baseRef || "base", "Choose base branch", "base"))
+        .child(div().text_size(11).text_color(t.dim).child("→"))
+        .child(chip("repo-head", this.compareHead || "HEAD", "Choose target branch", "head"))
+        .child(div().flex_1().min_w(0).truncate().text_right().text_size(11).text_color(t.dim).child(`${entries.length} ${entries.length === 1 ? "file" : "files"}`)))
+      .child(h_flex().h(30).px(8).gap(4).items_center().border_t(1).border_color(t.border)
+        .child(this.iconButton("view-diff-base", "diff", repo?.base ? `Show every change (${repo.base}) in the main area` : "Show every change of the branch",
+          (cx) => this.pickBranch({ area: "base" }, cx), t, { label: "View Diff", disabled: !any }))
+        .when(any, (e) => e.child(this.lineCounts(entries, t)))
+        .child(div().flex_1())
+        .children(this.viewSwitches(t))
+        .child(this.iconButton("refresh-repo", "refresh", "Refresh", (cx) => this.refresh(cx), t, { disabled: Boolean(this.busy) })));
   }
 
   toolbar(t) {
     const busy = Boolean(this.busy), any = this.entries.length > 0, allStaged = any && this.entries.every((e) => e.staged === "all");
+    if (this.tab === "reviews" || this.tab === "issues") return this.forgeToolbar(t);
     if (this.tab === "repo") return this.repoToolbar(t);
     if (this.tab === "history") {
       const h = this.history, n = h.base.length;
@@ -1043,14 +1277,17 @@ export class Panel {
   branchRow(t) {
     const b = this.branch, busy = Boolean(this.busy), action = G.remoteAction(b, this.remotes, this.hasHead);
     const name = b.detached ? `detached ${b.oid?.slice(0, 7) ?? ""}` : b.head;
+    const ci = this.ciChip(t);
     return h_flex().h(34).flex_none().px(10).gap(6).items_center()
-      .child(h_flex().id("branch").min_w(0).flex_1().gap(5).items_center().cursor_pointer().text_size(12).tooltip(b.upstream ? `Tracking ${b.upstream}` : "No upstream")
+      .child(h_flex().id("branch").min_w(0).gap(5).items_center().cursor_pointer().text_size(12).tooltip(b.upstream ? `Tracking ${b.upstream}` : "No upstream")
         .on_click((_e, cx) => this.branchMenu(cx))
         .child(svg(icon("branch")).size(13).flex_none().text_color(t.muted))
         .child(div().flex_none().text_color(t.muted).child(this.root.split("/").pop()))
         .child(div().flex_none().text_color(t.dim).child("/"))
         .child(div().min_w(0).truncate().hover((s) => s.text_color(t.accent)).child(name))
         .child(svg(icon("chevron-down")).size(11).flex_none().text_color(t.dim)))
+      .child(div().flex_1())
+      .when(Boolean(ci), (e) => e.child(ci))
       .when(Boolean(action), (e) => e.child(this.split("remote", busy && /Push|Pull|Fetch/.test(this.busy) ? `${this.busy}…` : action.count ? `${action.count} ${action.label}` : action.label, t, {
         enabled: !busy, iconName: action.count ? null : action.type === "pull" ? "fetch" : action.type === "push" ? "push" : "refresh",
         tip: action.type === "push" ? (b.upstream ? `Push to ${b.upstream}` : "Push and set upstream") : action.type === "pull" ? `Pull ${b.upstream} (fast-forward only)` : "Fetch from every remote",
@@ -1123,6 +1360,7 @@ export class Panel {
     this.takePick(cx);
     const t = theme(), shown = this.shown(), shownKey = itemKey(shown);
     const history = this.tab === "history" && Boolean(this.root), repo = this.tab === "repo" && Boolean(this.root);
+    const forgeTab = (this.tab === "reviews" || this.tab === "issues") && Boolean(this.root && this.forge && this.showForge);
     const limited = this.tab === "repo" ? Boolean(this.repo?.limited) : this.limited;
     const graph = history && (this.history.commits.length
       ? this.historyView(t, shown)
@@ -1146,7 +1384,8 @@ export class Panel {
       .when(Boolean(this.root) && !history, (e) => e.child(this.filterBar(t)))
       .when(history, (e) => e.child(v_flex().flex_1().min_h(0).child(graph)))
       .when(repo, (e) => e.child(this.repoView(t, shown)))
-      .when(!history && !repo, (e) => e.child(this.changesView(t, shown)))
+      .when(forgeTab, (e) => e.child(this.forgeView(t)))
+      .when(!history && !repo && !forgeTab, (e) => e.child(this.changesView(t, shown)))
       .when(limited, (e) => e.child(div().px(12).py(4).text_size(11).text_color(t.dim).child(`Showing the first ${G.LIMIT.toLocaleString()} files`)))
       .when(Boolean(this.note), (e) => e.child(div().id("note").px(10).py(6).flex_none().border_t(1).border_color(t.border).text_size(11).text_color(t.ansi1).cursor_pointer().tooltip("Click to dismiss")
         .on_click((_e, cx) => { this.note = null; cx.notify(); }).child(this.note)))
