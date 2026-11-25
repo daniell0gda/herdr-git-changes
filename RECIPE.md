@@ -184,9 +184,12 @@ hint in 11px `dim`. Danger items are `ansi1`.
       copy full path.
     - Stash: Apply, Pop, Show diff, and Drop (danger).
     - Commit: checkout each local branch on it, checkout each remote-only
-      branch with tracking, checkout this commit (detached), Show diff, copy
-      hash (⌘C), copy short hash, copy message, Uncommit (last commit only),
-      and Revert.
+      branch with tracking, checkout this commit (detached), Show diff,
+      Preview commit, copy hash (⌘C), copy short hash, copy message, Uncommit
+      (last commit only), and Revert.
+  - Preview commit opens a centered dialog with the commit's short hash,
+    author and date, the subject in bold, the body, and the footer (the
+    trailers of the last paragraph, each key dimmed) under a rule.
   - In History, right-clicking the uncommitted row opens the ☰ menu.
   - **Open folder** runs `xdg-open` (Linux), `open` (macOS) or `explorer`
     (Windows) on the folder, with a 10s timeout that is not treated as a

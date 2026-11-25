@@ -293,8 +293,9 @@ Controls:
   shows every change. ⌘C copies the shown commit's hash. ↓ and ↑ open the
   commit below and above.
 - **Right-click a commit** to check out a branch on it, a remote branch
-  (tracking it) or the commit itself, show its diff, copy its hash, short hash
-  or message, revert it, or uncommit it if it's the last one.
+  (tracking it) or the commit itself, show its diff, **preview its whole
+  message** (subject, body and footer), copy its hash, short hash or message,
+  revert it, or uncommit it if it's the last one.
 - **Paging:** 300 commits at first, 300 more each time you scroll to the end.
 
 ### Safety
@@ -528,6 +529,7 @@ Files in `mods/git-changes/`:
 | `syntax.js` | Syntax colors: a file's language from its extension, and each diff line split into colored tokens. No Herdr imports. |
 | `aimsg.js` | The generated commit message: the agent, model, effort and template choices, the prompt, each agent's arguments and the cleanup of its reply. No Herdr imports. |
 | `menu.js` | The dropdown and right-click menus, shown as popups. |
+| `commit-preview.js` | A commit's whole message (subject, body and footer) in a dialog. |
 | `git.js` | Parsing git's output, the folder tree, pairing lines for two columns, finding the images in a diff, and the argv behind every action. No Herdr imports, so node can test it. |
 
 The panel and the diff tab are separate copies of the mod. They talk through

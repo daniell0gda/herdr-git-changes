@@ -338,6 +338,27 @@ test("Revert and the commit's own diff", () => {
   assert.equal(existsSync(join(r, "two.txt")), false);
 });
 
+test("A commit's message splits into its subject, body and footer", () => {
+  const r = repo("message");
+  const message = (msg) => { run(r, ["commit", "-q", "--allow-empty", "-m", msg]); return G.parseCommitMessage(run(r, [...G.READ, ...G.commitMessageArgs("HEAD")])); };
+  const full = message("feat(x): add y\n\nWhy it matters,\nover two lines.\n\nAnd a second paragraph.\n\nBREAKING CHANGE: y replaces z\n  for everyone\nFixes #5\nCo-Authored-By: A <a@b>");
+  assert.equal(full.subject, "feat(x): add y");
+  assert.equal(full.body, "Why it matters,\nover two lines.\n\nAnd a second paragraph.");
+  assert.equal(full.footer, "BREAKING CHANGE: y replaces z\n  for everyone\nFixes #5\nCo-Authored-By: A <a@b>");
+  assert.equal(full.hash, run(r, ["rev-parse", "HEAD"]).trim());
+  assert.equal(full.author, "T");
+  assert.ok(full.short.length >= 7 && full.hash.startsWith(full.short) && full.time > 0);
+  const one = message("fix: one line");
+  assert.deepEqual([one.subject, one.body, one.footer], ["fix: one line", "", ""]);
+  const prose = message("chore: tidy\n\nNote: this is prose,\nnot a footer.");
+  assert.equal(prose.body, "Note: this is prose,\nnot a footer.");
+  assert.equal(prose.footer, "", "a last paragraph with other lines is body");
+  const onlyFooter = message("docs: x\n\nSigned-off-by: T <t@t>");
+  assert.deepEqual([onlyFooter.body, onlyFooter.footer], ["", "Signed-off-by: T <t@t>"]);
+  assert.deepEqual(G.parseTrailer("Refs #12"), { key: "Refs", separator: " #", value: "12" });
+  assert.equal(G.parseTrailer("not a trailer"), null);
+});
+
 // --- the Repo tab: what the branch changed since its base ----------------------------
 
 const currentOf = (cwd) => run(cwd, ["branch", "--show-current"]).trim() || null;

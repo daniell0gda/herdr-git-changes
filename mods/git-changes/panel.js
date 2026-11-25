@@ -22,6 +22,7 @@ import * as F from "./forge.js";
 import { icon, menuHeight } from "./menu.js";
 import { showInTab, shownIn, shownSource, getLayout, setLayout } from "./diff.js";
 import { showForgeInTab, openExternal } from "./forge-view.js";
+import { PREVIEW_WIDTH, previewHeight } from "./commit-preview.js";
 import { History } from "./history.js";
 import { ROW, OUTER, START, PAD, INDENT, BOX, ACTION, COUNT, COUNT_GAP, BRANCH, FOLDABLE, buildRows, buildBranchRows, filesInside, matchingPath, isFolded, stepIndex, zoneAt } from "./rows.js";
 
@@ -701,6 +702,7 @@ export class Panel {
       !head && { label: "Checkout this commit", icon: "commit", hint: "detached", run: (cx) => this.act(cx, "Checkout", G.detachArgs(c.hash), { done: `Checked out ${c.short}` }) },
       { separator: true },
       { label: "Show diff", icon: "diff", run: (cx) => this.pick(c, cx) },
+      { label: "Preview commit", icon: "eye", run: (cx) => this.previewCommit(c, cx) },
       { label: "Copy hash", icon: "copy", hint: "⌘C", copy: c.hash },
       { label: "Copy short hash", icon: "copy", hint: c.short, copy: c.short },
       { label: "Copy message", icon: "copy", copy: c.subject },
@@ -708,6 +710,21 @@ export class Panel {
       head && { label: "Uncommit", icon: "undo", hint: "keep changes staged", run: (cx) => this.uncommit(cx) },
       { label: "Revert commit", icon: "reset", run: (cx) => this.act(cx, "Revert", G.revertArgs(c.hash), { done: `Reverted ${c.short}` }) },
     ], cx, 270);
+  }
+
+  previewCommit(c, cx) {
+    const root = this.root, on = this.on, context = this.context;
+    cx.spawn(async (cx) => {
+      try {
+        const r = await exec("git", [...G.READ, ...G.commitMessageArgs(c.hash)], { cwd: root, on });
+        if (this.context !== context) return;
+        if (r.code !== 0) throw new Error(G.gitError(r));
+        const commit = G.parseCommitMessage(r.stdout);
+        openOverlay({ mod: "git-changes", kind: "dialog", width: PREVIEW_WIDTH, height: previewHeight(commit), props: { role: "commit", commit } });
+      } catch (e) {
+        if (this.context === context) this.fail(cx, `Preview failed: ${String(e?.message ?? e)}`);
+      }
+    });
   }
 
   optionsMenu(cx) {

@@ -8,11 +8,14 @@ import { Panel } from "./panel.js";
 import { Menu } from "./menu.js";
 import { DiffView } from "./diff.js";
 import { ForgeView } from "./forge-view.js";
+import { CommitPreview } from "./commit-preview.js";
+
+const PARTS = { menu: Menu, diff: DiffView, forge: ForgeView, commit: CommitPreview };
 
 export default class GitChanges extends View {
   init(_props, cx) {
-    const role = props()?.role;
-    this.part = role === "menu" ? new Menu() : role === "diff" ? new DiffView() : role === "forge" ? new ForgeView() : new Panel();
+    const Part = PARTS[props()?.role] ?? Panel;
+    this.part = new Part();
     this.part.init(cx);
   }
 

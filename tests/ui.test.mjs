@@ -328,6 +328,27 @@ await test("History renders the graph and a commit opens in the diff tab", async
   assert.ok(opened && /^[0-9a-f]{7}$/.test(opened[1].name), "named after the short hash");
 });
 
+await test("Preview commit opens a dialog with the commit's subject, body and footer", async () => {
+  const init = panel.history.commits.find((c) => c.subject === "init");
+  panel.commitMenu(init, cx);
+  chooseMenu(H.overlays.at(-1), "Preview commit");
+  panel.takePick(cx);
+  await settle();
+  const dialog = H.overlays.at(-1);
+  assert.equal(dialog.kind, "dialog");
+  assert.equal(dialog.props.role, "commit");
+  assert.deepEqual([dialog.props.commit.hash, dialog.props.commit.subject, dialog.props.commit.footer], [init.hash, "init", ""]);
+  const { CommitPreview } = await import(pathToFileURL(join(lib, "commit-preview.js")).href);
+  const saved = H.currentProps;
+  try {
+    H.currentProps = { role: "commit", commit: { ...dialog.props.commit, body: "Why:\nbecause.", footer: "Fixes #5\nCo-Authored-By: A <a@b>" } };
+    const preview = new CommitPreview();
+    preview.init(cx);
+    const shown = texts(preview.render(cx));
+    for (const text of ["init", "Why:", "because.", "Fixes #", "5", "Co-Authored-By: ", "A <a@b>", init.short]) assert.ok(shown.includes(text), `shows ${text}`);
+  } finally { H.currentProps = saved; }
+});
+
 await test("Repo lists only the files the branch's commits changed since main, and opens their diff against the merge base", async () => {
   const branchRepo = join(base, "branch-repo"), bgit = (...a) => execFileSync("git", a, { cwd: branchRepo, env, encoding: "utf8" });
   mkdirSync(join(branchRepo, "lib"), { recursive: true });

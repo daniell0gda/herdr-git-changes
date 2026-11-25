@@ -149,6 +149,33 @@ export function parseLog(text) {
   });
 }
 
+export const commitMessageArgs = (hash) => ["show", "-s", "--format=%H%x1f%h%x1f%an%x1f%at%x1f%B", hash];
+
+const TRAILER = /^([A-Za-z0-9-]+|BREAKING CHANGE)(: | #)(.*)$/;
+const CONTINUATION = /^\s/;
+
+/** A trailer line, such as `Fixes #5` or `Signed-off-by: A <a@b>`, as { key, separator, value }; null for any other line. */
+export function parseTrailer(line) {
+  const m = TRAILER.exec(line);
+  return m ? { key: m[1], separator: m[2], value: m[3] } : null;
+}
+
+const isFooter = (paragraph) => {
+  const lines = paragraph.split("\n");
+  return Boolean(parseTrailer(lines[0])) && lines.every((line) => parseTrailer(line) || CONTINUATION.test(line));
+};
+
+/**
+ * `commitMessageArgs`' output as { hash, short, author, time, subject, body, footer }. The footer is
+ * the last paragraph when it holds only trailers; `body` and `footer` are "" when the message has none.
+ */
+export function parseCommitMessage(text) {
+  const [hash, short, author, time, message = ""] = text.split("\x1f");
+  const [first = "", ...rest] = message.trim().split(/\n[ \t]*\n/);
+  const footer = rest.length && isFooter(rest.at(-1)) ? rest.pop() : "";
+  return { hash, short, author, time: Number(time), subject: first.replace(/\s*\n\s*/g, " "), body: rest.join("\n\n"), footer };
+}
+
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 export function ago(seconds) {
   const s = Date.now() / 1000 - seconds;
