@@ -1,4 +1,4 @@
-# Git Changes for Herdr
+# Surrogo: Git Changes for Herdr
 
 A git panel for the [Herdr](https://herdr.dev) desktop app, laid out like
 [Zed](https://zed.dev)'s git panel. You stage files with checkboxes, then
