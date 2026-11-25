@@ -1256,6 +1256,26 @@ await test("a reply is typed into the open session; once that session is closed,
   assert.ok(texts(talk.render(cx)).includes("Renamed it to two."));
 });
 
+await test("the x on a thread with an open session closes that session and keeps the thread", async () => {
+  const c = threadOf(talk, "TWO"), id = `gc-close-session-${c.id}`, open = `Session review-${c.id} is open · right-click → Open session`;
+  const pressAt = (tree, x) => {
+    byId(tree, `${talk.listId}-rows`).handlers["mouse_down:left"]({ local_position: { x, y: 5 }, bounds: { x: 0, y: 0, width: 800, height: 600 } }, cx);
+    diffList(tree).handlers.item_click(`t${c.id}`, cx);
+  };
+  const tree = talk.render(cx), cardRight = 54 + talk.cardWidth();
+  assert.equal(byId(tree, id).props.tooltip[0], `Close session review-${c.id}. A reply opens it again.`);
+  pressAt(tree, cardRight - 40);
+  assert.equal(talk.target?.id, c.id, "a click on the card's text opens the reply box");
+  byId(talk.render(cx), "git-changes-diff").handlers.key_down({ key: "escape" }, cx);
+  assert.ok(!hcCalls.some((a) => a[0] === "kill" && a[1] === c.terminal), "and keeps the session");
+  pressAt(talk.render(cx), cardRight - 5); await settle();
+  assert.ok(hcCalls.some((a) => a[0] === "kill" && a[1] === c.terminal), "its terminal is ended");
+  const after = talk.render(cx);
+  assert.ok(!texts(after).includes(open) && !byId(after, id), "no open session, so no x");
+  assert.ok(texts(after).includes("Renamed it to two."), "the thread stays");
+  assert.equal(threadOf(talk, "TWO").session, c.session, "its files stay, so a reply resumes it");
+});
+
 await test("a new thread forks the person's session, never a copy; while its session waits for permission the thread says so, and Open session peeks at it", async () => {
   await comment(talk, lineKey(talk, "three"), "What is this for?");
   assert.equal(claudeOf(runs().at(-1))[2], MAIN_SESSION, "copies (c0ffee00-…) are newer but skipped");

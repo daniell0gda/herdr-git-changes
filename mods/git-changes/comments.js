@@ -372,9 +372,14 @@ export async function readAnswer(comment, on) {
   return r.code === 0 ? answerAfter(r.stdout, since) : null;
 }
 
+/** Ends the terminal of the thread's session, if it runs, and keeps its files, so a reply resumes it. */
+export async function closeSession(comment) {
+  if (sessionTerminal(comment)) await hc(["kill", comment.terminal]).catch(() => null);
+}
+
 /** Ends the thread's session, if it runs, and deletes its files, so it leaves no trace in `claude --resume`. */
 export async function removeSession(comment, on) {
-  if (sessionTerminal(comment)) await hc(["kill", comment.terminal]).catch(() => null);
+  await closeSession(comment);
   if (!SESSION_ID.test(comment.session ?? "") || !comment.cwd) return;
   const dir = projectDir(comment.cwd);
   if (PROJECT_DIR.test(dir)) await exec("sh", ["-c", REMOVE_SESSION, "sh", dir, comment.session], { on }).catch(() => null);

@@ -474,5 +474,7 @@ hint in 11px `dim`. Danger items are `ansi1`.
   `review-…` sub-agent appears under that Claude Code terminal, a spinner
   shows under the comment, then a short answer. Right-click → Open session
   shows the copy's terminal. A reply in the thread is typed there and adds no
-  new copy. Ask it for a change: the copy makes it. Delete thread ends the
+  new copy. Ask it for a change: the copy makes it. The x at the thread's
+  right edge (tooltip *Close session review-…*) ends that terminal; the next
+  reply opens it again. Delete thread ends the
   sub-agent and removes the copy from `claude --resume`.

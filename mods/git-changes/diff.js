@@ -33,7 +33,7 @@ const MAX_IMAGES = 20, CAPTION = 22, CELL_PAD = 10, STATE_HEIGHT = 64, MANY_IMAG
 const THREAD_INDENT = 54, THREAD_MARGIN = 16, MIN_CARD = 240, CHAR_WIDTH = 7.25, LINE = 18;
 const TEXT_PAD = 4;
 const MARKDOWN_PAD = 16, MARKDOWN_GAP = 12, MIN_DIAGRAM = 120, MAX_DIAGRAM_HEIGHT = 4000;
-const CARD_PAD = 10, CARD_PAD_Y = 6, CARD_BORDER = 1, ROW_PAD_Y = 4, BLOCK_GAP = 4, COMPOSE_INPUT = 60;
+const CARD_PAD = 10, CARD_PAD_Y = 6, CARD_BORDER = 1, ROW_PAD_Y = 4, BLOCK_GAP = 4, COMPOSE_INPUT = 60, CLOSE_STRIP = 26;
 const CARD_FRAME = 2 * (ROW_PAD_Y + CARD_PAD_Y + CARD_BORDER);
 const COMPOSE_HEIGHT = CARD_FRAME + COMPOSE_INPUT + BLOCK_GAP + LINE;
 const MENU_WIDTH = 200, MARK = 18, MARK_ICON = 14, ANSWER_POLL_MS = 1500, SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"], SPINNER_MS = 80;
@@ -117,7 +117,7 @@ export class DiffView {
     this.comments = []; this.commentsFile = null; this.saving = Promise.resolve(null);
     this.providers = C.cachedProviders(null); this.providersOn = undefined;
     this.asking = new Set(); this.reading = new Set(); this.failures = new Map(); this.target = null; this.threadVersion = 0; this.display = null;
-    this.menuActions = {}; this.menuSerial = 0; this.pickSeen = shared("git-changes.pick")?.at; this.pressSide = "right";
+    this.menuActions = {}; this.menuSerial = 0; this.pickSeen = shared("git-changes.pick")?.at; this.pressSide = "right"; this.pressX = null;
     this.composer = TextareaState.new({ placeholder: "Comment on this line", rows: 3 });
     this.composer.on("submit", (e, cx) => { if (!e.shift) this.send(cx); });
     this.clearRows();
@@ -303,8 +303,29 @@ export class DiffView {
     cx.spawn(async () => C.removeSession(comment, on));
   }
 
+  closeSession(comment, cx) {
+    cx.spawn(async (cx) => { await C.closeSession(comment); this.changed(); cx.notify(); });
+  }
+
+  pressed(ev) {
+    this.pressX = ev.local_position ? ev.local_position.x / (settings().zoom ?? 1) : null;
+  }
+
+  isOnCloseStrip(x) {
+    const right = THREAD_INDENT + this.cardWidth();
+    return x !== null && x >= right - CLOSE_STRIP && x <= right;
+  }
+
+  clickThread(id, x, cx) {
+    const comment = this.commentById(id);
+    if (comment && C.sessionTerminal(comment) && this.isOnCloseStrip(x)) this.closeSession(comment, cx);
+    else this.openComposer({ id });
+  }
+
   clickRow(key, cx) {
-    if (key.startsWith("t")) this.openComposer({ id: key.slice(1) });
+    const x = this.pressX;
+    this.pressX = null;
+    if (key.startsWith("t")) this.clickThread(key.slice(1), x, cx);
     else if (key.startsWith("r")) {
       const row = this.lineAt(Number(key.slice(1)));
       if (!row) return;
@@ -609,7 +630,9 @@ export class DiffView {
 
   cardWidth() { return Math.max(MIN_CARD, (this.bodyWidth || 600) - THREAD_INDENT - THREAD_MARGIN); }
 
-  cardColumns() { return Math.floor((this.cardWidth() - 2 * (CARD_PAD + CARD_BORDER)) / CHAR_WIDTH); }
+  cardColumns(session) { return Math.floor((this.cardWidth() - 2 * CARD_BORDER - CARD_PAD - this.cardPadRight(session)) / CHAR_WIDTH); }
+
+  cardPadRight(session) { return session ? CLOSE_STRIP : CARD_PAD; }
 
   blocksOf({ comment, orphan }) {
     return C.threadBlocks(comment, {
@@ -619,17 +642,17 @@ export class DiffView {
   }
 
   threadHeight(entry) {
-    const blocks = this.blocksOf(entry), columns = this.cardColumns();
+    const blocks = this.blocksOf(entry), columns = this.cardColumns(C.sessionTerminal(entry.comment));
     return CARD_FRAME + blocks.reduce((sum, b) => sum + C.blockLines(b, columns) * LINE, 0) + BLOCK_GAP * (blocks.length - 1);
   }
 
-  cardRow(height, card) {
+  cardRow(height, card, padRight = CARD_PAD) {
     return div().w_full().h(height).flex_none().py(ROW_PAD_Y).pl(THREAD_INDENT).font_family(mono()).text_size(12)
-      .child(card.w(this.cardWidth()).h_full().px(CARD_PAD).py(CARD_PAD_Y).gap(BLOCK_GAP).rounded(6).border_1());
+      .child(card.w(this.cardWidth()).h_full().pl(CARD_PAD).pr(padRight).py(CARD_PAD_Y).gap(BLOCK_GAP).rounded(6).border_1());
   }
 
   threadRow(entry, t) {
-    const columns = this.cardColumns();
+    const session = C.sessionTerminal(entry.comment), columns = this.cardColumns(session);
     const tones = { you: t.foreground, claude: t.foreground, dim: t.dim, error: t.ansi1 };
     const toneOf = (tone) => tones[tone] ?? t.foreground;
     const text = (b) => (b.spinner
@@ -642,7 +665,17 @@ export class DiffView {
     const blocks = this.blocksOf(entry).map((b) => v_flex().flex_none().h(C.blockLines(b, columns) * LINE).overflow_hidden()
       .when(Boolean(b.label), (e) => e.child(div().h(LINE).flex_none().text_size(11).font_semibold().text_color(b.label !== "You" ? t.accent : t.muted).child(b.label)))
       .child(text(b)));
-    return this.cardRow(this.threadHeight(entry), v_flex().border_color(t.border).bg(t.raised).children(blocks));
+    const card = v_flex().relative().border_color(t.border).bg(t.raised).children(blocks)
+      .when(Boolean(session), (e) => e.child(this.closeSessionStrip(entry.comment, session, t)));
+    return this.cardRow(this.threadHeight(entry), card, this.cardPadRight(session));
+  }
+
+  /** The card's right edge strip with an x at its top; a click anywhere on it closes the session, as `clickThread` hit-tests by x only. */
+  closeSessionStrip(comment, session, t) {
+    return v_flex().id(`gc-close-session-${comment.id}`).absolute().top(0).bottom(0).right(0).w(CLOSE_STRIP).pt(CARD_PAD_Y + 3)
+      .items_center().rounded_r(5).cursor_pointer().text_color(t.muted).tooltip(`Close session ${session.name}. A reply opens it again.`)
+      .hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .child(svg(icon("x")).size(12));
   }
 
   composeRow(t) {
@@ -756,10 +789,11 @@ export class DiffView {
       (range) => rows.slice(range.start, range.end).map((row, i) => this.rowView(row, t, layout, keys[range.start + i]))).size_full()
       .on_item_click((key, cx) => this.clickRow(key, cx))
       .on_item_secondary_click((key, _e, cx) => this.threadMenu(key, cx));
+    const pressable = div().id(`${this.listId}-rows`).size_full().on_mouse_down("left", (ev) => this.pressed(ev)).child(list);
     return div().id(`${this.listId}-body`).flex_1().min_h(0).relative().font_family(mono()).text_size(12)
       .on_size_change((size, cx) => this.measured(size, cx))
       .when(layout === "unified", (e) => e.child(div().id(`${this.listId}-x`).size_full().overflow_x_scrollbar()
-        .child(div().w_full().min_w(this.width + 110 + MARK + TEXT_PAD).h_full().child(list))))
+        .child(div().w_full().min_w(this.width + 110 + MARK + TEXT_PAD).h_full().child(pressable))))
       // Split: one list for both columns keeps them level; sideways scrolling moves both texts.
       .when(layout === "split", (e) => e.child(div().id(`${this.listId}-split`).size_full()
         .on_mouse_down("left", (ev) => { this.pressSide = ev.local_position && ev.bounds && ev.local_position.x < ev.bounds.width / 2 ? "left" : "right"; })
@@ -769,7 +803,7 @@ export class DiffView {
           this.offset = Math.max(0, Math.min(Math.max(0, this.width - 200), this.offset - dx));
           cx.stop_propagation(); cx.notify();
         })
-        .child(list)))
+        .child(pressable)))
       .child(Scrollbar.vertical(`${this.listId}-${layout}`).viewport_from_layout().absolute().inset_0());
   }
 
