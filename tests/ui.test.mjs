@@ -1206,6 +1206,13 @@ const answerIn = async (view, lineText, text) => {
   const t = terminalOf(c); if (t) t.status = "idle";
   view.pollAnswers(cx); await settle();
 };
+// A press on a thread's card at `x` from the row's left, then the click the list reports for it.
+const pressThread = (view, c, x, shift = false) => {
+  const tree = view.render(cx);
+  byId(tree, `${view.listId}-rows`).handlers["mouse_down:left"]({ local_position: { x, y: 5 }, bounds: { x: 0, y: 0, width: 800, height: 600 }, modifiers: { shift } }, cx);
+  diffList(tree).handlers.item_click(`t${c.id}`, cx);
+};
+const cardRightOf = (view) => 54 + view.cardWidth();
 const savedComments = () => JSON.parse(readFileSync(join(talkRepo, ".git/git-changes-comments.json"), "utf8")).comments;
 
 let talk;
@@ -1258,17 +1265,13 @@ await test("a reply is typed into the open session; once that session is closed,
 
 await test("the x on a thread with an open session closes that session and keeps the thread", async () => {
   const c = threadOf(talk, "TWO"), id = `gc-close-session-${c.id}`, open = `Session review-${c.id} is open · right-click → Open session`;
-  const pressAt = (tree, x) => {
-    byId(tree, `${talk.listId}-rows`).handlers["mouse_down:left"]({ local_position: { x, y: 5 }, bounds: { x: 0, y: 0, width: 800, height: 600 } }, cx);
-    diffList(tree).handlers.item_click(`t${c.id}`, cx);
-  };
-  const tree = talk.render(cx), cardRight = 54 + talk.cardWidth();
-  assert.equal(byId(tree, id).props.tooltip[0], `Close session review-${c.id}. A reply opens it again.`);
-  pressAt(tree, cardRight - 40);
+  const cardRight = cardRightOf(talk);
+  assert.equal(byId(talk.render(cx), id).props.tooltip[0], `Close session review-${c.id}. A reply opens it again. Shift-click also deletes the thread.`);
+  pressThread(talk, c, cardRight - 40);
   assert.equal(talk.target?.id, c.id, "a click on the card's text opens the reply box");
   byId(talk.render(cx), "git-changes-diff").handlers.key_down({ key: "escape" }, cx);
   assert.ok(!hcCalls.some((a) => a[0] === "kill" && a[1] === c.terminal), "and keeps the session");
-  pressAt(talk.render(cx), cardRight - 5); await settle();
+  pressThread(talk, c, cardRight - 5); await settle();
   assert.ok(hcCalls.some((a) => a[0] === "kill" && a[1] === c.terminal), "its terminal is ended");
   const after = talk.render(cx);
   assert.ok(!texts(after).includes(open) && !byId(after, id), "no open session, so no x");
@@ -1330,6 +1333,17 @@ await test("Delete thread ends its session and deletes the copy's files, not the
   assert.ok(hcCalls.some((a) => a[0] === "kill" && a[1] === c.terminal), "its terminal is ended");
   assert.ok(!readdirSync(sessions).includes(`${c.session}.jsonl`), "its copy is deleted");
   assert.ok(readdirSync(sessions).includes(`${MAIN_SESSION}.jsonl`), "the person's own session is kept");
+});
+
+await test("Shift-click on the x deletes the thread and its session", async () => {
+  await comment(talk, lineKey(talk, "one"), "Why one?");
+  const c = threadOf(talk, "one");
+  await answerIn(talk, "one", "It counts.");
+  pressThread(talk, c, cardRightOf(talk) - 5, true); await settle();
+  assert.ok(!texts(talk.render(cx)).includes("It counts."), "the thread is gone");
+  assert.ok(!savedComments().some((x) => x.id === c.id), "gone from the file");
+  assert.ok(hcCalls.some((a) => a[0] === "kill" && a[1] === c.terminal), "its terminal is ended");
+  assert.ok(!readdirSync(sessions).includes(`${c.session}.jsonl`), "its copy is deleted");
 });
 
 await test("Escape closes the comment box; in two columns the pressed side picks the line", async () => {

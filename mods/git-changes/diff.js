@@ -117,7 +117,7 @@ export class DiffView {
     this.comments = []; this.commentsFile = null; this.saving = Promise.resolve(null);
     this.providers = C.cachedProviders(null); this.providersOn = undefined;
     this.asking = new Set(); this.reading = new Set(); this.failures = new Map(); this.target = null; this.threadVersion = 0; this.display = null;
-    this.menuActions = {}; this.menuSerial = 0; this.pickSeen = shared("git-changes.pick")?.at; this.pressSide = "right"; this.pressX = null;
+    this.menuActions = {}; this.menuSerial = 0; this.pickSeen = shared("git-changes.pick")?.at; this.pressSide = "right"; this.press = null;
     this.composer = TextareaState.new({ placeholder: "Comment on this line", rows: 3 });
     this.composer.on("submit", (e, cx) => { if (!e.shift) this.send(cx); });
     this.clearRows();
@@ -308,24 +308,25 @@ export class DiffView {
   }
 
   pressed(ev) {
-    this.pressX = ev.local_position ? ev.local_position.x / (settings().zoom ?? 1) : null;
+    this.press = ev.local_position ? { x: ev.local_position.x / (settings().zoom ?? 1), shift: Boolean(ev.modifiers?.shift) } : null;
   }
 
-  isOnCloseStrip(x) {
+  isOnCloseStrip(press) {
     const right = THREAD_INDENT + this.cardWidth();
-    return x !== null && x >= right - CLOSE_STRIP && x <= right;
+    return press !== null && press.x >= right - CLOSE_STRIP && press.x <= right;
   }
 
-  clickThread(id, x, cx) {
+  clickThread(id, press, cx) {
     const comment = this.commentById(id);
-    if (comment && C.sessionTerminal(comment) && this.isOnCloseStrip(x)) this.closeSession(comment, cx);
-    else this.openComposer({ id });
+    if (!comment || !C.sessionTerminal(comment) || !this.isOnCloseStrip(press)) this.openComposer({ id });
+    else if (press.shift) this.deleteThread(id, cx);
+    else this.closeSession(comment, cx);
   }
 
   clickRow(key, cx) {
-    const x = this.pressX;
-    this.pressX = null;
-    if (key.startsWith("t")) this.clickThread(key.slice(1), x, cx);
+    const press = this.press;
+    this.press = null;
+    if (key.startsWith("t")) this.clickThread(key.slice(1), press, cx);
     else if (key.startsWith("r")) {
       const row = this.lineAt(Number(key.slice(1)));
       if (!row) return;
@@ -670,10 +671,10 @@ export class DiffView {
     return this.cardRow(this.threadHeight(entry), card, this.cardPadRight(session));
   }
 
-  /** The card's right edge strip with an x at its top; a click anywhere on it closes the session, as `clickThread` hit-tests by x only. */
+  /** The card's right edge strip with an x at its top; a click anywhere on it closes the session (Shift: deletes the thread too), as `clickThread` hit-tests by x only. */
   closeSessionStrip(comment, session, t) {
     return v_flex().id(`gc-close-session-${comment.id}`).absolute().top(0).bottom(0).right(0).w(CLOSE_STRIP).pt(CARD_PAD_Y + 3)
-      .items_center().rounded_r(5).cursor_pointer().text_color(t.muted).tooltip(`Close session ${session.name}. A reply opens it again.`)
+      .items_center().rounded_r(5).cursor_pointer().text_color(t.muted).tooltip(`Close session ${session.name}. A reply opens it again. Shift-click also deletes the thread.`)
       .hover((s) => s.bg(t.hover).text_color(t.foreground))
       .child(svg(icon("x")).size(12));
   }

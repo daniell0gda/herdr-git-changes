@@ -213,7 +213,8 @@ the next click.
   you in its session*. **Right-click → Open session** shows its terminal.
 - **Close the session** with the **x** at the right edge of the thread, while
   its session is open. It ends the session's terminal and keeps the thread and
-  the session's files, so a reply opens the session again.
+  the session's files, so a reply opens the session again. **Shift-click** the
+  x to delete the thread and its session, as Delete thread does.
 - **Right-click a thread** to open its session, reply, ask again after a
   failure, copy the answer, or delete the thread. Deleting ends the session and
   deletes its files, so it doesn't stay in `claude --resume`.
@@ -499,7 +500,8 @@ Herdr does. It clicks through:
 - comment threads, with a stand-in `hc` and session files: the interactive
   fork started as a sub-agent, its answer read back, replies typed into it or
   reopening it, a second thread that skips the copies, waiting for permission
-  and Open session, the x that closes a session, a thread that follows its
+  and Open session, the x that closes a session (with Shift, deletes the
+  thread), a thread that follows its
   line, Ask again, a session closed
   without an answer, Delete thread, worktrees, and the side picked in two
   columns.
