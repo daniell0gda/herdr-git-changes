@@ -8,8 +8,8 @@ import { parseTrailer } from "./git.js";
 import { icon } from "./menu.js";
 
 export const PREVIEW_WIDTH = 560;
-const LINE = 18, SUBJECT_LINE = 22, FRAME = 90, MAX_SHARE = 0.85;
-const TEXT_WIDTH = PREVIEW_WIDTH - 32, CHAR_WIDTH = 7, SUBJECT_CHAR_WIDTH = 8;
+const LINE = 18, SUBJECT_LINE = 22, CARD_PAD = 14, FRAME = 90 + 2 * CARD_PAD, MAX_SHARE = 0.85;
+const TEXT_WIDTH = PREVIEW_WIDTH - 32 - 2 * CARD_PAD, CHAR_WIDTH = 7, SUBJECT_CHAR_WIDTH = 8;
 
 const wrappedRows = (text, charWidth) =>
   text.split("\n").reduce((rows, line) => rows + Math.max(1, Math.ceil((line.length * charWidth) / TEXT_WIDTH)), 0);
@@ -55,9 +55,10 @@ export class CommitPreview {
     const t = theme(), c = this.commit;
     return v_flex().id("git-changes-commit").size_full().min_h(0).bg(t.popover).text_color(t.foreground).text_size(12.5)
       .child(this.header(c, t))
-      .child(v_flex().id("gcc-message").flex_1().min_h(0).overflow_y_scrollbar().px(16).pb(14).gap(12)
-        .child(div().text_size(14).font_semibold().child(c.subject))
-        .when(Boolean(c.body), (e) => e.child(TextView.markdown("gcc-body", c.body).selectable().w_full()))
-        .when(Boolean(c.footer), (e) => e.child(this.footer(c.footer, t))));
+      .child(v_flex().id("gcc-message").flex_1().min_h(0).overflow_y_scrollbar().px(16).pb(14)
+        .child(v_flex().p(CARD_PAD).gap(12).rounded(8).border_1().border_color(t.border).bg(t.background)
+          .child(div().text_size(14).font_semibold().child(c.subject))
+          .when(Boolean(c.body), (e) => e.child(TextView.markdown("gcc-body", c.body).selectable().w_full()))
+          .when(Boolean(c.footer), (e) => e.child(this.footer(c.footer, t)))));
   }
 }
