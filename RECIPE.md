@@ -188,7 +188,8 @@ hint in 11px `dim`. Danger items are `ansi1`.
       Preview commit, copy hash (⌘C), copy short hash, copy message, Uncommit
       (last commit only), and Revert.
   - Preview commit opens a centered dialog with the commit's short hash,
-    author and date, the subject in bold, the body, and the footer (the
+    author and date, the subject in bold, the body rendered as Markdown
+    (selectable), and the footer (the
     trailers of the last paragraph, each key dimmed) under a rule.
   - In History, right-clicking the uncommitted row opens the ☰ menu.
   - **Open folder** runs `xdg-open` (Linux), `open` (macOS) or `explorer`

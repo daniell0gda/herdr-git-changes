@@ -1,8 +1,8 @@
-// A commit's whole message in a dialog: the subject, the body and the footer
+// A commit's whole message in a dialog: the subject, the body as Markdown and the footer
 // (its trailers), opened from a commit's right-click menu with props
 // { role: "commit", commit } (from git.js' parseCommitMessage).
 import { div, svg } from "gpui-kit";
-import { v_flex, h_flex } from "gpui-base";
+import { v_flex, h_flex, TextView } from "gpui-base";
 import { props, closeOverlay, theme } from "herdr";
 import { parseTrailer } from "./git.js";
 import { icon } from "./menu.js";
@@ -41,10 +41,6 @@ export class CommitPreview {
         .child(svg(icon("x")).size(14).text_color(t.muted)));
   }
 
-  lines(text, color) {
-    return v_flex().text_color(color).children(text.split("\n").map((line) => div().min_h(LINE).child(line)));
-  }
-
   footer(text, t) {
     return v_flex().pt(10).border_t_1().border_color(t.border).children(text.split("\n").map((line) => {
       const trailer = parseTrailer(line);
@@ -61,7 +57,7 @@ export class CommitPreview {
       .child(this.header(c, t))
       .child(v_flex().id("gcc-message").flex_1().min_h(0).overflow_y_scrollbar().px(16).pb(14).gap(12)
         .child(div().text_size(14).font_semibold().child(c.subject))
-        .when(Boolean(c.body), (e) => e.child(this.lines(c.body, t.foreground)))
+        .when(Boolean(c.body), (e) => e.child(TextView.markdown("gcc-body", c.body).selectable().w_full()))
         .when(Boolean(c.footer), (e) => e.child(this.footer(c.footer, t))));
   }
 }

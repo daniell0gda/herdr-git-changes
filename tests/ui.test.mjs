@@ -345,11 +345,13 @@ await test("Preview commit opens a dialog with the commit's subject, body and fo
   assert.equal(previewHeight({ ...short, body: "line\n".repeat(200) }, 800), 680, "at most 85% of the window, then it scrolls");
   const saved = H.currentProps;
   try {
-    H.currentProps = { role: "commit", commit: { ...dialog.props.commit, body: "Why:\nbecause.", footer: "Fixes #5\nCo-Authored-By: A <a@b>" } };
+    const body = "**Why:**\n\n- because `x`";
+    H.currentProps = { role: "commit", commit: { ...dialog.props.commit, body, footer: "Fixes #5\nCo-Authored-By: A <a@b>" } };
     const preview = new CommitPreview();
     preview.init(cx);
-    const shown = texts(preview.render(cx));
-    for (const text of ["init", "Why:", "because.", "Fixes #", "5", "Co-Authored-By: ", "A <a@b>", init.short]) assert.ok(shown.includes(text), `shows ${text}`);
+    const tree = preview.render(cx), shown = texts(tree);
+    for (const text of ["init", "Fixes #", "5", "Co-Authored-By: ", "A <a@b>", init.short]) assert.ok(shown.includes(text), `shows ${text}`);
+    assert.deepEqual(walk(tree).filter((n) => n.kind === "markdown").map((n) => n.props.markdown[0]), [body], "the body is drawn as Markdown, the footer is not");
   } finally { H.currentProps = saved; }
 });
 
