@@ -35,6 +35,9 @@ const TEXT_PAD = 4;
 const MARKDOWN_PAD = 16, MARKDOWN_GAP = 12, MIN_DIAGRAM = 120, MAX_DIAGRAM_HEIGHT = 4000;
 const CARD_PAD = 10, CARD_PAD_Y = 6, CARD_BORDER = 1, ROW_PAD_Y = 4, BLOCK_GAP = 4, COMPOSE_INPUT = 60, CLOSE_STRIP = 26;
 const CARD_FRAME = 2 * (ROW_PAD_Y + CARD_PAD_Y + CARD_BORDER);
+const ASKED_PAD = 6, ASKED_PAD_Y = 3, ASKED_FRAME = 2 * (ASKED_PAD_Y + CARD_BORDER);
+const ASKED_INSET_COLUMNS = Math.ceil((2 * (ASKED_PAD + CARD_BORDER)) / CHAR_WIDTH);
+const isAsked = (block) => block.tone === "you";
 const COMPOSE_HEIGHT = CARD_FRAME + COMPOSE_INPUT + BLOCK_GAP + LINE;
 const MENU_WIDTH = 200, MARK = 18, MARK_ICON = 14, ANSWER_POLL_MS = 1500, SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"], SPINNER_MS = 80;
 const mono = () => settings().font_family ?? "JetBrains Mono";
@@ -642,9 +645,13 @@ export class DiffView {
     });
   }
 
+  blockHeight(block, columns) {
+    return isAsked(block) ? C.blockLines(block, columns - ASKED_INSET_COLUMNS) * LINE + ASKED_FRAME : C.blockLines(block, columns) * LINE;
+  }
+
   threadHeight(entry) {
     const blocks = this.blocksOf(entry), columns = this.cardColumns(C.sessionTerminal(entry.comment));
-    return CARD_FRAME + blocks.reduce((sum, b) => sum + C.blockLines(b, columns) * LINE, 0) + BLOCK_GAP * (blocks.length - 1);
+    return CARD_FRAME + blocks.reduce((sum, b) => sum + this.blockHeight(b, columns), 0) + BLOCK_GAP * (blocks.length - 1);
   }
 
   cardRow(height, card, padRight = CARD_PAD) {
@@ -663,7 +670,8 @@ export class DiffView {
         ? div().h(LINE).px(6).flex().items_center().rounded(4).border_1().border_color(t.border).bg(t.background).cursor_text()
           .text_size(11).text_color(t.dim).child(b.text)
         : div().line_height(`${LINE}px`).text_color(toneOf(b.tone)).when(Boolean(b.single), (e) => e.truncate()).child(b.text));
-    const blocks = this.blocksOf(entry).map((b) => v_flex().flex_none().h(C.blockLines(b, columns) * LINE).overflow_hidden()
+    const blocks = this.blocksOf(entry).map((b) => v_flex().flex_none().h(this.blockHeight(b, columns)).overflow_hidden()
+      .when(isAsked(b), (e) => e.px(ASKED_PAD).py(ASKED_PAD_Y).rounded(4).border_1().border_color(t.border).bg(t.background))
       .when(Boolean(b.label), (e) => e.child(div().h(LINE).flex_none().text_size(11).font_semibold().text_color(b.label !== "You" ? t.accent : t.muted).child(b.label)))
       .child(text(b)));
     const card = v_flex().relative().border_color(t.border).bg(t.raised).children(blocks)
