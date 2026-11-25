@@ -967,6 +967,21 @@ await test("an image's diff shows the new picture, the old one and what changed,
   assert.equal(pictures(view.render(cx)).length, 6);
 });
 
+await test("clicking a file's header in a diff of many files ticks its checkbox and folds it to the header; clicking again unfolds it", async () => {
+  const view = await openDiff({ area: "all" });
+  const keysOf = () => walk(view.render(cx)).find((n) => n.kind === "list").keys;
+  const at = view.rows.findIndex((r) => r.kind === "f" && r.text === "art/logo.svg"), key = `r${at}`;
+  const next = view.rows.findIndex((r, i) => i > at && r.kind === "f");
+  const inside = view.rows.slice(at + 1, next).map((_r, i) => `r${at + 1 + i}`);
+  assert.ok(inside.length > 0 && inside.every((k) => keysOf().includes(k)), "unfolded, the file's lines show");
+  walk(view.render(cx)).find((n) => n.kind === "list").handlers.item_click(key, cx);
+  assert.ok(keysOf().includes(key), "the header stays");
+  assert.ok(inside.every((k) => !keysOf().includes(k)), "folded, the file's lines are gone");
+  assert.ok(byId(view.render(cx), "gc-diff-fold-art/logo.svg").kids.includes("✓"), "the checkbox is ticked");
+  walk(view.render(cx)).find((n) => n.kind === "list").handlers.item_click(key, cx);
+  assert.ok(inside.every((k) => keysOf().includes(k)), "unfolded again");
+});
+
 await test("a single image diff in one column stacks before over after; in two columns it sits side by side", async () => {
   const view = await openDiff({ area: "file", path: "art/hero.png", status: "M", staged: "none" });
   view.bodyWidth = 800; view.bodyHeight = 600; view.imageVersion++;

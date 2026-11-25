@@ -155,6 +155,10 @@ the next click.
   sides move together.
 - The switch is in the tab's header and in the panel's toolbar; both change
   every diff tab.
+- **Fold a file:** in a diff of many files (all changes, a commit, a stash),
+  each file's header has a checkbox left of its name. Click the header to tick
+  it: the file folds to its header line. Click again to unfold it. Each view
+  keeps its own folded files while the tab is open.
 - **Syntax colors** for TypeScript and JavaScript, C# and HTML, from the
   terminal theme's colors: keywords, types, calls, strings, numbers and
   comments, or tags, attributes and their values. Changed lines keep their red
@@ -487,6 +491,7 @@ Herdr does. It clicks through:
   the number of files;
 - opening the diff tab and reusing it;
 - one and two columns;
+- folding a file in a diff of many files;
 - Repo: only the files a branch's commits changed, folding, and their diff
   against the merge base;
 - History;

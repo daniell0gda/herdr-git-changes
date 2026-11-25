@@ -8,9 +8,19 @@
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { props, closeOverlay, notify, setShared, theme } from "herdr";
+import { BOX } from "./rows.js";
 
 export const icon = (name) => `mods/git-changes/icons/${name}.svg`;
 export const menuHeight = (items) => items.reduce((h, it) => h + (it.separator ? 9 : 28), 10);
+
+/** `state` "all" shows a tick, "some" a dash, anything else an empty box. */
+export function checkbox(id, state, t) {
+  const on = state === "all", some = state === "some";
+  return h_flex().id(id).size(BOX).flex_none().items_center().justify_center().rounded(3).border_1()
+    .border_color(on || some ? t.accent : t.input).when(on, (e) => e.bg(t.accent)).text_size(10).text_color(on ? t.accent_foreground : t.accent)
+    .hover((s) => s.border_color(t.accent))
+    .child(on ? "✓" : some ? "−" : "");
+}
 
 export class Menu {
   init(cx) {

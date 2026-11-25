@@ -19,12 +19,12 @@ import * as G from "./git.js";
 import * as Apps from "./apps.js";
 import * as AI from "./aimsg.js";
 import * as F from "./forge.js";
-import { icon, menuHeight } from "./menu.js";
+import { icon, menuHeight, checkbox } from "./menu.js";
 import { showInTab, shownIn, shownSource, getLayout, setLayout } from "./diff.js";
 import { showForgeInTab, openExternal } from "./forge-view.js";
 import { PREVIEW_WIDTH, previewHeight } from "./commit-preview.js";
 import { History } from "./history.js";
-import { ROW, OUTER, START, PAD, INDENT, BOX, ACTION, COUNT, COUNT_GAP, BRANCH, FOLDABLE, buildRows, buildBranchRows, filesInside, matchingPath, isFolded, stepIndex, zoneAt } from "./rows.js";
+import { ROW, OUTER, START, PAD, INDENT, ACTION, COUNT, COUNT_GAP, BRANCH, FOLDABLE, buildRows, buildBranchRows, filesInside, matchingPath, isFolded, stepIndex, zoneAt } from "./rows.js";
 
 // The focused terminal's folder, or `props.folder` when opened as a pane on one repository.
 function location() {
@@ -890,14 +890,6 @@ export class Panel {
         .child(svg(icon("chevron-down")).size(12).text_color(primary && enabled ? t.solid_foreground : t.muted)));
   }
 
-  checkboxView(id, state, t) {
-    const on = state === "all", some = state === "some";
-    return h_flex().id(id).size(BOX).flex_none().items_center().justify_center().rounded(3).border_1()
-      .border_color(on || some ? t.accent : t.input).when(on, (e) => e.bg(t.accent)).text_size(10).text_color(on ? t.accent_foreground : t.accent)
-      .hover((s) => s.border_color(t.accent))
-      .child(on ? "✓" : some ? "−" : "");
-  }
-
   actionIcon(id, name, tip, t, { danger, armed } = {}) {
     return h_flex().id(id).size(ACTION).flex_none().items_center().justify_center().rounded(5).tooltip(armed ? "Click again to confirm" : tip)
       .text_color(armed ? t.ansi1 : t.dim).when(armed, (e) => e.bg(t.ansi1 + "22"))
@@ -915,13 +907,13 @@ export class Panel {
     return this.rowBody(row.key, t, { selected, gap: COUNT_GAP })
       .child(svg(icon(row.folded ? "chevron-right" : "chevron-down")).size(12).flex_none().text_color(t.dim))
       .child(div().flex_1().text_size(12).text_color(t.muted).child(row.title))
-      .when(row.area !== "stash", (e) => e.child(this.checkboxView(`check-${row.area}`, row.staged, t)))
+      .when(row.area !== "stash", (e) => e.child(checkbox(`check-${row.area}`, row.staged, t)))
       .child(div().w(COUNT).flex_none().px(4).rounded(4).bg(t.raised).text_size(10.5).text_color(t.muted).text_center().child(String(row.count)));
   }
 
   folderRowView(row, t, selected) {
     return this.rowBody(row.key, t, { selected, gap: 6, depth: row.depth, tip: row.path })
-      .when(row.area !== BRANCH, (el) => el.child(this.checkboxView(`stage-dir-${row.key}`, row.staged, t)))
+      .when(row.area !== BRANCH, (el) => el.child(checkbox(`stage-dir-${row.key}`, row.staged, t)))
       .child(svg(icon(row.open ? "chevron-down" : "chevron-right")).size(11).flex_none().text_color(t.dim))
       .child(svg(icon("folder")).size(13).flex_none().text_color(t.muted))
       .child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(row.name))
@@ -932,7 +924,7 @@ export class Panel {
     const e = row.entry, armed = this.armed === `discard-${e.path}`, staging = row.area !== BRANCH;
     const color = e.conflict || e.status === "D" ? t.ansi1 : e.untracked || e.status === "A" ? t.ansi2 : t.blocked;
     return this.rowBody(row.key, t, { selected, depth: row.depth, tip: e.path })
-      .when(staging, (el) => el.child(this.checkboxView(`stage-${e.path}`, e.staged, t)))
+      .when(staging, (el) => el.child(checkbox(`stage-${e.path}`, e.staged, t)))
       .child(div().w(10).flex_none().text_size(11).text_color(color).child(e.untracked ? "U" : e.status))
       .child(h_flex().flex_1().min_w(0).items_center()
         .child(div().max_w(240).min_w(0).truncate().text_color(e.status === "D" ? t.muted : t.foreground).when(e.status === "D", (el) => el.line_through()).child(row.name))

@@ -19,7 +19,7 @@ import { v_flex, h_flex, Scrollbar, v_virtual_list, TextareaState, Textarea, Tex
 import { exec, readTextFile, watchFolder, theme, settings, props, shared, setShared, spaces, panes, run, notify, openOverlay, terminals } from "herdr";
 import * as G from "./git.js";
 import * as C from "./comments.js";
-import { icon, menuHeight } from "./menu.js";
+import { icon, menuHeight, checkbox } from "./menu.js";
 import { previewImage, pruneCache } from "./images.js";
 import { fitSize, formatBytes } from "./imageinfo.js";
 import { highlightRows, syntaxColors, Token } from "./syntax.js";
@@ -120,6 +120,7 @@ export class DiffView {
     this.comments = []; this.commentsFile = null; this.saving = Promise.resolve(null);
     this.providers = C.cachedProviders(null); this.providersOn = undefined;
     this.asking = new Set(); this.reading = new Set(); this.failures = new Map(); this.target = null; this.threadVersion = 0; this.display = null;
+    this.folds = new Map();
     this.menuActions = {}; this.menuSerial = 0; this.pickSeen = shared("git-changes.pick")?.at; this.pressSide = "right"; this.press = null;
     this.composer = TextareaState.new({ placeholder: "Comment on this line", rows: 3 });
     this.composer.on("submit", (e, cx) => { if (!e.shift) this.send(cx); });
@@ -326,12 +327,27 @@ export class DiffView {
     else this.closeSession(comment, cx);
   }
 
+  /** The paths folded in the shown view; each view (all changes, a commit, a stash) keeps its own. */
+  foldedFiles() {
+    const view = itemTitle(this.item);
+    if (!this.folds.has(view)) this.folds.set(view, new Set());
+    return this.folds.get(view);
+  }
+
+  toggleFold(path) {
+    const folded = this.foldedFiles();
+    if (!folded.delete(path)) folded.add(path);
+    this.changed();
+  }
+
   clickRow(key, cx) {
     const press = this.press;
     this.press = null;
     if (key.startsWith("t")) this.clickThread(key.slice(1), press, cx);
     else if (key.startsWith("r")) {
-      const row = this.lineAt(Number(key.slice(1)));
+      const index = Number(key.slice(1)), shown = this.baseRow(index);
+      if (shown?.kind === "f") { this.toggleFold(shown.text); cx.notify(); return; }
+      const row = this.lineAt(index);
       if (!row) return;
       const threads = this.display?.placed.get(row);
       this.openComposer(threads ? { id: threads.at(-1).id } : { anchor: C.anchorOf(row) });
@@ -339,9 +355,11 @@ export class DiffView {
     cx.notify();
   }
 
+  baseRow(index) { return (getLayout() === "split" ? this.pairs : this.rows)?.[index] ?? null; }
+
   lineAt(index) {
-    const base = getLayout() === "split" ? this.pairs : this.rows;
-    const lines = base?.[index] ? C.linesOf(base[index]) : [];
+    const row = this.baseRow(index);
+    const lines = row ? C.linesOf(row) : [];
     return lines.length > 1 && this.pressSide === "right" ? lines[1] : lines[0] ?? null;
   }
 
@@ -525,9 +543,16 @@ export class DiffView {
       .child(h_flex().size_full().min_w(0).pl(TEXT_PAD).gap(8).when(Boolean(tint), (e) => e.bg(tint)).children(cells));
   }
 
+  fileHeader(row, t) {
+    const folded = this.foldedFiles().has(row.text);
+    return h_flex().w_full().px(12).h(HEAD).flex_none().gap(8).items_center().cursor_pointer().bg(t.raised).border_t(1).border_color(t.border)
+      .child(checkbox(`gc-diff-fold-${row.text}`, folded ? "all" : "none", t))
+      .child(div().flex_1().min_w(0).truncate().font_semibold().text_color(folded ? t.muted : t.foreground).child(row.text));
+  }
+
   unifiedRow(row, t, key) {
     const { kind, old, number, text } = row;
-    if (kind === "f") return div().w_full().px(12).h(HEAD).flex_none().flex().items_center().truncate().bg(t.raised).border_t(1).border_color(t.border).font_semibold().text_color(t.foreground).child(text);
+    if (kind === "f") return this.fileHeader(row, t);
     if (kind === "@") return div().w_full().px(12).h(ROW).flex_none().truncate().bg(t.raised).text_color(t.dim).child(text);
     const color = kind === "+" ? t.ansi2 : kind === "-" ? t.ansi1 : t.foreground;
     const tint = kind === "+" || kind === "-" ? color + "18" : null;
@@ -718,17 +743,20 @@ export class DiffView {
     return list;
   }
 
-  /** The shown rows with each line's threads under it, the composer where it's open, and threads whose line is gone at the end. */
+  /** The shown rows with each line's threads under it, the composer where it's open, and threads whose line is gone at the end. A folded file shows only its header. */
   displayRows(base) {
     if (this.display?.base === base && this.display.version === this.threadVersion) return this.display;
     const { placed, orphans } = C.placeComments(this.rows.filter(C.isLine), this.comments);
-    const target = this.target, rows = [], keys = [];
+    const target = this.target, rows = [], keys = [], folded = this.foldedFiles();
     const add = (row, key) => { rows.push(row); keys.push(key); };
     const addThread = (comment, orphan) => {
       add({ kind: "thread", comment, orphan }, `t${comment.id}`);
       if (target?.id === comment.id) add({ kind: "compose" }, "compose");
     };
+    let hidden = false;
     base.forEach((row, i) => {
+      if (row.kind === "f") hidden = folded.has(row.text);
+      else if (hidden) return;
       add(row, `r${i}`);
       const lines = C.linesOf(row);
       for (const line of lines) for (const comment of placed.get(line) ?? []) addThread(comment, false);
