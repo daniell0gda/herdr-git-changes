@@ -8,12 +8,17 @@ import { parseTrailer } from "./git.js";
 import { icon } from "./menu.js";
 
 export const PREVIEW_WIDTH = 560;
-const LINE = 18, FRAME = 110, MAX_HEIGHT = 560;
+const LINE = 18, SUBJECT_LINE = 22, FRAME = 90, MAX_SHARE = 0.85;
+const TEXT_WIDTH = PREVIEW_WIDTH - 32, CHAR_WIDTH = 7, SUBJECT_CHAR_WIDTH = 8;
 
-/** Tall enough for the message's lines, up to a limit past which the message scrolls. */
-export function previewHeight(commit) {
-  const lines = [commit.body, commit.footer].filter(Boolean).join("\n\n").split("\n").length;
-  return Math.min(MAX_HEIGHT, FRAME + LINE * lines);
+const wrappedRows = (text, charWidth) =>
+  text.split("\n").reduce((rows, line) => rows + Math.max(1, Math.ceil((line.length * charWidth) / TEXT_WIDTH)), 0);
+
+/** Tall enough for the whole message with its long lines wrapped, up to most of `windowHeight`; past that the message scrolls. */
+export function previewHeight(commit, windowHeight) {
+  const message = [commit.body, commit.footer].filter(Boolean).join("\n\n");
+  const content = FRAME + SUBJECT_LINE * wrappedRows(commit.subject, SUBJECT_CHAR_WIDTH) + (message ? LINE * wrappedRows(message, CHAR_WIDTH) : 0);
+  return Math.min(Math.round(windowHeight * MAX_SHARE), content);
 }
 
 const pad = (n) => String(n).padStart(2, "0");

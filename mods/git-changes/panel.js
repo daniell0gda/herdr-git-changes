@@ -720,7 +720,7 @@ export class Panel {
         if (this.context !== context) return;
         if (r.code !== 0) throw new Error(G.gitError(r));
         const commit = G.parseCommitMessage(r.stdout);
-        openOverlay({ mod: "git-changes", kind: "dialog", width: PREVIEW_WIDTH, height: previewHeight(commit), props: { role: "commit", commit } });
+        openOverlay({ mod: "git-changes", kind: "dialog", width: PREVIEW_WIDTH, height: previewHeight(commit, this.windowHeight), props: { role: "commit", commit } });
       } catch (e) {
         if (this.context === context) this.fail(cx, `Preview failed: ${String(e?.message ?? e)}`);
       }
@@ -1374,6 +1374,7 @@ export class Panel {
     if (key() !== this.context) this.refresh(cx);
     const changed = shared("git-graph.changed");
     if (changed !== this.seenChange) { this.seenChange = changed; if (!this.busy) this.refresh(cx); }
+    this.windowHeight = window.viewport_size().height;
     this.takePick(cx);
     const t = theme(), shown = this.shown(), shownKey = itemKey(shown);
     const history = this.tab === "history" && Boolean(this.root), repo = this.tab === "repo" && Boolean(this.root);

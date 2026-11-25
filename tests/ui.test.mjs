@@ -56,7 +56,7 @@ export const image = (p) => { const e = el("image"); e.props.path = [p]; return 
 export const TextView = { markdown: (id, text) => { const e = el("markdown"); e.id = id; e.props.markdown = [text]; return e; } };
 export const v_flex = () => el("v"), h_flex = () => el("h");
 export const PathBuilder = { stroke: () => { const b = { move_to: () => b, line_to: () => b, cubic_bezier_to: () => b, dash_array: () => b, build: () => ({}) }; return b; } };
-globalThis.window = { paint_path: () => el("path") };
+globalThis.window = { paint_path: () => el("path"), viewport_size: () => ({ width: 1280, height: 800 }) };
 // A virtual list draws every row at once here (or the first H.visibleRows), so every row's code runs.
 export function v_virtual_list(id, count, sizes, key, render) {
   const e = el("list"); e.id = id; e.sizes = sizes;
@@ -338,7 +338,11 @@ await test("Preview commit opens a dialog with the commit's subject, body and fo
   assert.equal(dialog.kind, "dialog");
   assert.equal(dialog.props.role, "commit");
   assert.deepEqual([dialog.props.commit.hash, dialog.props.commit.subject, dialog.props.commit.footer], [init.hash, "init", ""]);
-  const { CommitPreview } = await import(pathToFileURL(join(lib, "commit-preview.js")).href);
+  const { CommitPreview, previewHeight } = await import(pathToFileURL(join(lib, "commit-preview.js")).href);
+  assert.ok(dialog.height < 150, "a one-line message gets a small dialog");
+  const short = { subject: "fix: x", body: "one\ntwo", footer: "" };
+  assert.ok(previewHeight({ ...short, body: `one\n${"word ".repeat(60)}` }, 800) > previewHeight(short, 800), "a long line wraps and takes more height");
+  assert.equal(previewHeight({ ...short, body: "line\n".repeat(200) }, 800), 680, "at most 85% of the window, then it scrolls");
   const saved = H.currentProps;
   try {
     H.currentProps = { role: "commit", commit: { ...dialog.props.commit, body: "Why:\nbecause.", footer: "Fixes #5\nCo-Authored-By: A <a@b>" } };
