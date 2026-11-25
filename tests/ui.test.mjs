@@ -1434,6 +1434,81 @@ await test("hovering anywhere on a line lights up only its line numbers, the tex
   H.shared["git-changes.layout"] = "unified";
 });
 
+const wordRepo = join(base, "words");
+const wordGit = (...a) => execFileSync("git", a, { cwd: wordRepo, env, encoding: "utf8" });
+mkdirSync(wordRepo);
+wordGit("init", "-q", "-b", "main");
+writeFileSync(join(wordRepo, "notes.ts"), "const total = sum(items);\nlog(total);\n");
+wordGit("add", "."); wordGit("commit", "-qm", "words");
+writeFileSync(join(wordRepo, "notes.ts"), "const total = sum(items) + 1;\nlog(total, items);\n");
+
+// Code is 12 px monospace: 7.2 px a character. Unified text starts 140 px into the row, split text 72 px into its side.
+const CODE_CHAR = 7.2, UNIFIED_TEXT = 140, SPLIT_TEXT = 72;
+const diffRoot = (view) => byId(view.render(cx), "git-changes-diff");
+const altClick = (view, key, x, clicks) => {
+  for (let count = 1; count <= clicks; count++) {
+    const tree = view.render(cx), press = { local_position: { x, y: 5 }, bounds: { x: 0, y: 0, width: 800, height: 600 }, click_count: count, modifiers: { alt: true } };
+    byId(tree, `${view.listId}-rows`).handlers["mouse_down:left"](press, cx);
+    byId(tree, `${view.listId}-split`)?.handlers["mouse_down:left"](press, cx);
+    diffList(tree).handlers.item_click(key, cx);
+  }
+};
+const wordMarks = (view, word) => walk(diffList(view.render(cx))).filter((n) => n.kids.length === 1 && n.kids[0] === word && (n.props.bg || n.props.underline));
+
+const hovers = (node) => Object.hasOwn(node, "hoverStyle");
+
+let words, talkView;
+await test("while Alt is held, lines show no hover and no new-comment icon", async () => {
+  talkView = H.shared["git-changes.view"];
+  words = await openTalk(wordRepo);
+  for (const layout of ["unified", "split"]) {
+    H.shared["git-changes.layout"] = layout;
+    diffRoot(words).handlers.modifiers_changed({ modifiers: { alt: true } }, cx);
+    const held = lineRows(words.render(cx));
+    assert.ok(held.length >= 2, `${layout}: lines are drawn`);
+    assert.ok(held.every((n) => !hovers(n) && !n.kids.some((k) => k.id === `${n.id}-new`)), `${layout}: nothing reacts to the pointer`);
+    diffRoot(words).handlers.modifiers_changed({ modifiers: { alt: false } }, cx);
+    assert.ok(lineRows(words.render(cx)).every(hovers), `${layout}: the hover comes back on release`);
+  }
+  H.shared["git-changes.layout"] = "unified";
+  byId(words.render(cx), `${words.listId}-body`).handlers.mouse_move({ modifiers: { alt: true } }, cx);
+  assert.ok(!lineRows(words.render(cx)).some(hovers), "Alt held before the pointer came in counts too");
+  byId(words.render(cx), `${words.listId}-body`).handlers.mouse_move({ modifiers: { alt: false } }, cx);
+});
+
+await test("an Alt-click opens no comment box; Alt+double-click picks the word and underlines its other appearances", async () => {
+  const key = lineKey(words, "log(total, items);"), onTotal = UNIFIED_TEXT + 4 * CODE_CHAR + 2;
+  altClick(words, key, onTotal, 1);
+  assert.equal(words.target, null, "a single Alt-click does nothing");
+  assert.equal(wordMarks(words, "total").length, 0);
+  altClick(words, key, onTotal, 2);
+  assert.equal(words.target, null, "nor does the double-click open a comment box");
+  assert.ok(!diffList(words.render(cx)).keys.includes("compose"));
+  const marks = wordMarks(words, "total");
+  assert.equal(marks.length, 4, "every line has one total");
+  assert.deepEqual(marks.filter((n) => n.props.bg).map((n) => n.props.bg[0]), ["#accent55"], "only the picked one is shaded");
+  assert.equal(marks.filter((n) => n.props.underline).length, 3, "the others are underlined");
+  assert.equal(wordMarks(words, "sum").length, 0, "other words keep their look");
+  diffRoot(words).handlers.key_down({ key: "escape" }, cx);
+  assert.equal(wordMarks(words, "total").length, 0, "Escape clears the pick");
+});
+
+await test("in two columns, Alt+double-click picks the word on the pressed side; off a word it clears the pick", async () => {
+  H.shared["git-changes.layout"] = "split";
+  words.render(cx);
+  const pair = `r${words.pairs.findIndex((p) => p.right?.text === "log(total, items);")}`;
+  altClick(words, pair, 400 + 1 + SPLIT_TEXT + 11 * CODE_CHAR + 2, 2);
+  const marks = wordMarks(words, "items");
+  assert.equal(marks.length, 3);
+  assert.equal(words.word.line, words.pairs.find((p) => p.right?.text === "log(total, items);").right, "the right side's line");
+  assert.equal(marks.filter((n) => n.props.bg).length, 1);
+  altClick(words, pair, 400 + 1 + SPLIT_TEXT + 9 * CODE_CHAR + 2, 2);
+  assert.equal(words.word, null, "the comma is no word");
+  assert.equal(wordMarks(words, "items").length, 0);
+  H.shared["git-changes.layout"] = "unified";
+  H.shared["git-changes.view"] = talkView;
+});
+
 await test("a long answer makes its thread taller, wrapped at the card's width", async () => {
   const { wrappedLines } = await import(pathToFileURL(join(lib, "comments.js")).href);
   assert.equal(wrappedLines("aaaaa bbbbb ccccc", 11), 2);

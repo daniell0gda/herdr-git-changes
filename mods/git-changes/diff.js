@@ -23,6 +23,7 @@ import { icon, menuHeight, checkbox } from "./menu.js";
 import { previewImage, pruneCache } from "./images.js";
 import { fitSize, formatBytes } from "./imageinfo.js";
 import { highlightRows, syntaxColors, Token } from "./syntax.js";
+import { wordAt, markWord } from "./words.js";
 import { loadMarkdown } from "./markdown.js";
 import { splitMermaid, drawDiagram, diagramKey, isDarkColor, Part } from "./mermaid.js";
 
@@ -40,6 +41,9 @@ const ASKED_INSET_COLUMNS = Math.ceil((2 * (ASKED_PAD + CARD_BORDER)) / CHAR_WID
 const isAsked = (block) => block.tone === "you";
 const COMPOSE_HEIGHT = CARD_FRAME + COMPOSE_INPUT + BLOCK_GAP + LINE;
 const MENU_WIDTH = 200, MARK = 18, MARK_ICON = 14, ANSWER_POLL_MS = 1500, SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"], SPINNER_MS = 80;
+const CODE_SIZE = 12, CODE_CHAR_WIDTH = CODE_SIZE * 0.6, LINE_NUMBER = 38, SIGN = 10, UNIFIED_GAP = 8, SPLIT_GAP = 6, SPLIT_BORDER = 1;
+const UNIFIED_TEXT_X = MARK + LINE_NUMBER * 2 + UNIFIED_GAP * 4 + TEXT_PAD + SIGN;
+const SPLIT_TEXT_X = MARK + LINE_NUMBER + SPLIT_GAP * 2 + TEXT_PAD;
 const mono = () => settings().font_family ?? "JetBrains Mono";
 
 const diffHeader = (path) => `diff --git a/${path} b/${path}`;
@@ -120,7 +124,7 @@ export class DiffView {
     this.comments = []; this.commentsFile = null; this.saving = Promise.resolve(null);
     this.providers = C.cachedProviders(null); this.providersOn = undefined;
     this.asking = new Set(); this.reading = new Set(); this.failures = new Map(); this.target = null; this.threadVersion = 0; this.display = null;
-    this.folds = new Map();
+    this.folds = new Map(); this.alt = false; this.word = null;
     this.menuActions = {}; this.menuSerial = 0; this.pickSeen = shared("git-changes.pick")?.at; this.pressSide = "right"; this.press = null;
     this.composer = TextareaState.new({ placeholder: "Comment on this line", rows: 3 });
     this.composer.on("submit", (e, cx) => { if (!e.shift) this.send(cx); });
@@ -312,8 +316,45 @@ export class DiffView {
   }
 
   pressed(ev) {
-    this.press = ev.local_position ? { x: ev.local_position.x / (settings().zoom ?? 1), shift: Boolean(ev.modifiers?.shift) } : null;
+    const zoom = settings().zoom ?? 1;
+    this.press = ev.local_position ? {
+      x: ev.local_position.x / zoom, width: (ev.bounds?.width ?? 0) / zoom, clicks: ev.click_count ?? 1,
+      shift: Boolean(ev.modifiers?.shift), alt: Boolean(ev.modifiers?.alt),
+    } : null;
   }
+
+  holdAlt(alt, cx) {
+    if (alt === this.alt) return;
+    this.alt = alt;
+    cx.notify();
+  }
+
+  /** Alt+double-click picks the word under the pointer, or clears the pick off a word; any other Alt-click does nothing. */
+  altClick(key, press) {
+    if (press.clicks !== 2) return;
+    this.word = key.startsWith("r") ? this.wordUnder(Number(key.slice(1)), press) : null;
+  }
+
+  wordUnder(index, press) {
+    const line = this.pressedLine(index);
+    if (!C.isLine(line)) return null;
+    const found = wordAt(line.text, this.columnAt(press));
+    return found && { ...found, line };
+  }
+
+  pressedLine(index) {
+    const row = this.baseRow(index);
+    if (row?.kind !== "pair") return row;
+    return this.pressSide === "left" ? row.left : row.right;
+  }
+
+  columnAt(press) {
+    if (getLayout() === "unified") return Math.floor((press.x - UNIFIED_TEXT_X) / CODE_CHAR_WIDTH);
+    const sideX = this.pressSide === "left" ? 0 : press.width / 2 + SPLIT_BORDER;
+    return Math.floor((press.x - sideX - SPLIT_TEXT_X + this.offset) / CODE_CHAR_WIDTH);
+  }
+
+  isPickedWord(line, start) { return this.word?.line === line && this.word.start === start; }
 
   isOnCloseStrip(press) {
     const right = THREAD_INDENT + this.cardWidth();
@@ -343,7 +384,8 @@ export class DiffView {
   clickRow(key, cx) {
     const press = this.press;
     this.press = null;
-    if (key.startsWith("t")) this.clickThread(key.slice(1), press, cx);
+    if (press?.alt) this.altClick(key, press);
+    else if (key.startsWith("t")) this.clickThread(key.slice(1), press, cx);
     else if (key.startsWith("r")) {
       const index = Number(key.slice(1)), shown = this.baseRow(index);
       if (shown?.kind === "f") { this.toggleFold(shown.text); cx.notify(); return; }
@@ -533,8 +575,8 @@ export class DiffView {
   }
 
   commentable(element, line, t, id) {
-    return element.when(C.isLine(line), (e) => e.id(id).relative().hover((s) => s.bg(t.accent + "33"))
-      .when(!this.hasThread(line), (e) => e.child(this.newCommentLayer(id, t))));
+    return element.when(C.isLine(line), (e) => e.id(id).relative().when(!this.alt, (e) => e.hover((s) => s.bg(t.accent + "33"))
+      .when(!this.hasThread(line), (e) => e.child(this.newCommentLayer(id, t)))));
   }
 
   /** The text part of a line. Its background is opaque, so the hover background of the line shows only in the line-number gutter. */
@@ -556,20 +598,22 @@ export class DiffView {
     if (kind === "@") return div().w_full().px(12).h(ROW).flex_none().truncate().bg(t.raised).text_color(t.dim).child(text);
     const color = kind === "+" ? t.ansi2 : kind === "-" ? t.ansi1 : t.foreground;
     const tint = kind === "+" || kind === "-" ? color + "18" : null;
-    return this.commentable(h_flex().w_full().h(ROW).flex_none().gap(8).when(Boolean(tint), (e) => e.bg(tint)), row, t, `line-${key}`)
+    return this.commentable(h_flex().w_full().h(ROW).flex_none().gap(UNIFIED_GAP).when(Boolean(tint), (e) => e.bg(tint)), row, t, `line-${key}`)
       .child(this.commentMark(row, t))
-      .child(div().w(38).flex_none().text_right().text_color(t.dim).child(kind === "-" ? String(number) : kind === " " ? String(old) : ""))
-      .child(div().w(38).flex_none().text_right().text_color(t.dim).child(kind === "+" || kind === " " ? String(number) : ""))
+      .child(div().w(LINE_NUMBER).flex_none().text_right().text_color(t.dim).child(kind === "-" ? String(number) : kind === " " ? String(old) : ""))
+      .child(div().w(LINE_NUMBER).flex_none().text_right().text_color(t.dim).child(kind === "+" || kind === " " ? String(number) : ""))
       .child(this.lineText(tint, t,
-        div().w(10).flex_none().text_color(color).child(kind === "+" || kind === "-" ? kind : ""),
+        div().w(SIGN).flex_none().text_color(color).child(kind === "+" || kind === "-" ? kind : ""),
         this.code(h_flex().flex_1().min_w(0).whitespace_nowrap(), row, kind === " " ? t.foreground : color, t)));
   }
 
   code(element, row, plain, t) {
-    if (!row?.tokens) return element.text_color(plain).child(row?.text ?? "");
+    const pieces = markWord(row?.tokens ?? [{ kind: Token.Plain, text: row?.text ?? "" }], this.word?.text);
     const colors = syntaxColors(t);
-    return element.text_color(t.foreground)
-      .children(row.tokens.map(({ kind, text }) => div().flex_none().when(kind !== Token.Plain, (e) => e.text_color(colors[kind])).child(text)));
+    return element.text_color(row?.tokens ? t.foreground : plain)
+      .children(pieces.map(({ kind, text, match }) => div().flex_none().when(kind !== Token.Plain, (e) => e.text_color(colors[kind]))
+        .when(match !== undefined, (e) => (this.isPickedWord(row, match) ? e.bg(t.accent + "55") : e.underline()))
+        .child(text)));
   }
 
   // One row of both columns. Both sides move by the same horizontal offset, so they stay lined up.
@@ -579,11 +623,11 @@ export class DiffView {
       const kind = entry?.kind, color = kind === "+" ? t.ansi2 : kind === "-" ? t.ansi1 : t.foreground;
       const number = !entry ? "" : left ? String(kind === " " ? entry.old : entry.number) : String(entry.number);
       const tint = !entry ? t.raised + "88" : kind === "+" || kind === "-" ? color + "18" : null;
-      return this.commentable(h_flex().flex_1().min_w(0).h_full().gap(6).items_center().overflow_hidden()
-        .when(!left, (e) => e.border_l(1).border_color(t.border))
+      return this.commentable(h_flex().flex_1().min_w(0).h_full().gap(SPLIT_GAP).items_center().overflow_hidden()
+        .when(!left, (e) => e.border_l(SPLIT_BORDER).border_color(t.border))
         .when(Boolean(tint), (e) => e.bg(tint)), entry, t, `line-${key}-${left ? "left" : "right"}`)
         .child(this.commentMark(entry, t))
-        .child(div().w(38).flex_none().text_right().text_color(t.dim).child(number))
+        .child(div().w(LINE_NUMBER).flex_none().text_right().text_color(t.dim).child(number))
         .child(this.lineText(tint, t, div().flex_1().min_w(0).overflow_hidden()
           .child(this.code(h_flex().w(this.width).flex_none().ml(-this.offset).whitespace_nowrap(), entry, kind === " " ? t.foreground : color, t))));
     };
@@ -827,8 +871,9 @@ export class DiffView {
       .on_item_click((key, cx) => this.clickRow(key, cx))
       .on_item_secondary_click((key, _e, cx) => this.threadMenu(key, cx));
     const pressable = div().id(`${this.listId}-rows`).size_full().on_mouse_down("left", (ev) => this.pressed(ev)).child(list);
-    return div().id(`${this.listId}-body`).flex_1().min_h(0).relative().font_family(mono()).text_size(12)
+    return div().id(`${this.listId}-body`).flex_1().min_h(0).relative().font_family(mono()).text_size(CODE_SIZE)
       .on_size_change((size, cx) => this.measured(size, cx))
+      .on_mouse_move((ev, cx) => this.holdAlt(Boolean(ev.modifiers?.alt), cx))
       .when(layout === "unified", (e) => e.child(div().id(`${this.listId}-x`).size_full().overflow_x_scrollbar()
         .child(div().w_full().min_w(this.width + 110 + MARK + TEXT_PAD).h_full().child(pressable))))
       // Split: one list for both columns keeps them level; sideways scrolling moves both texts.
@@ -849,9 +894,13 @@ export class DiffView {
     this.takePick(cx);
     const t = theme(), layout = getLayout();
     const root = v_flex().id("git-changes-diff").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(12.5)
+      .on_modifiers_changed((e, cx) => this.holdAlt(Boolean(e.modifiers?.alt), cx))
       .on_key_down((e, cx) => {
-        if (e.key !== "escape" || !this.target) return;
-        this.closeComposer(); cx.stop_propagation(); cx.notify();
+        if (e.key !== "escape") return;
+        if (this.target) this.closeComposer();
+        else if (this.word) this.word = null;
+        else return;
+        cx.stop_propagation(); cx.notify();
       });
     if (!this.item) return root.child(div().p(16).text_color(t.dim).child("Pick a file in Changes to see its diff here."));
     const previewing = this.previewing && isMarkdownFile(this.item);

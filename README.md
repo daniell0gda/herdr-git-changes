@@ -163,6 +163,12 @@ the next click.
   terminal theme's colors: keywords, types, calls, strings, numbers and
   comments, or tags, attributes and their values. Changed lines keep their red
   or green background and sign. Other files keep the plain red and green text.
+- **Mark a word:** hold Alt and double-click a word in the diff. The word gets a
+  shaded background, and each other place it appears as a whole word is
+  underlined. While Alt is held, a click opens no comment box and lines show no
+  hover or new-comment icon. Alt+double-click off a word, or press Esc, to
+  clear the mark. A line indented with tabs can pick a word a few characters
+  off.
 - **Images** (PNG, JPEG, GIF, WebP, SVG and BMP) show as pictures, with their
   size and file size. A changed image shows *Before* and *After*: stacked in
   one column, side by side in two columns, so the same switch compares them.
