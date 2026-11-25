@@ -923,7 +923,7 @@ export class Panel {
   fileRowView(row, t, selected) {
     const e = row.entry, armed = this.armed === `discard-${e.path}`, staging = row.area !== BRANCH;
     const color = e.conflict || e.status === "D" ? t.ansi1 : e.untracked || e.status === "A" ? t.ansi2 : t.blocked;
-    return this.rowBody(row.key, t, { selected, depth: row.depth, tip: e.path })
+    return this.rowBody(row.key, t, { selected, depth: row.depth, tip: e.from ? `${e.from} → ${e.path}` : e.path })
       .when(staging, (el) => el.child(checkbox(`stage-${e.path}`, e.staged, t)))
       .child(div().w(10).flex_none().text_size(11).text_color(color).child(e.untracked ? "U" : e.status))
       .child(h_flex().flex_1().min_w(0).items_center()

@@ -58,15 +58,22 @@ export function nearestBase(bases, current) {
 }
 
 export const mergeBaseArgs = (base) => ["merge-base", "HEAD", base];
-export const baseNameStatusArgs = (mergeBase, head) => ["diff", mergeBase, head, "--name-status", "-z", "--no-renames"];
-export const baseNumstatArgs = (mergeBase, head) => ["diff", mergeBase, head, ...NUMSTAT];
+export const baseNameStatusArgs = (mergeBase, head) => ["diff", mergeBase, head, "--name-status", "-z", "-M"];
+export const baseNumstatArgs = (mergeBase, head) => ["diff", mergeBase, head, "--numstat", "-z", "-M"];
 
-/** Every file the branch's commits changed, from `baseNameStatusArgs` and `baseNumstatArgs`, sorted by path. */
+/** Every file the branch's commits changed, from `baseNameStatusArgs` and `baseNumstatArgs`, sorted by path. A moved file is one "R" entry whose `from` is its old path. */
 export function branchEntries(nameStatus, numstat) {
   const stats = parseNumstat(numstat), tokens = nameStatus.split("\0"), entries = [];
   for (let i = 0; i + 1 < tokens.length; i += 2) {
+    const code = tokens[i][0];
+    if (code === "R") {
+      const path = tokens[i + 2];
+      entries.push({ path, from: tokens[i + 1], status: "R", add: 0, del: 0, ...(stats[path] ?? {}) });
+      i++;
+      continue;
+    }
     const path = tokens[i + 1];
-    entries.push({ path, status: letter(tokens[i][0]), add: 0, del: 0, ...(stats[path] ?? {}) });
+    entries.push({ path, status: letter(code), add: 0, del: 0, ...(stats[path] ?? {}) });
   }
   return entries.sort((a, b) => a.path.localeCompare(b.path));
 }
@@ -108,14 +115,20 @@ export function parseStatus(text) {
   return { branch, entries };
 }
 
-// `git diff --numstat -z --no-renames`: "add\tdel\tpath\0" per file. Several outputs add up.
+// `git diff --numstat -z`: "add\tdel\tpath\0" per file, or "add\tdel\t\0old\0new\0" for a move,
+// counted under the new path. Several outputs add up.
 export function parseNumstat(...texts) {
   const stats = {};
-  for (const text of texts) for (const entry of text.split("\0")) {
-    const [a, d, ...parts] = entry.split("\t");
-    if (!parts.length) continue;
-    const path = parts.join("\t"), old = stats[path] ?? { add: 0, del: 0 };
-    stats[path] = { add: old.add + (Number(a) || 0), del: old.del + (Number(d) || 0), binary: a === "-" };
+  for (const text of texts) {
+    const tokens = text.split("\0");
+    for (let i = 0; i < tokens.length; i++) {
+      const [a, d, ...parts] = tokens[i].split("\t");
+      if (!parts.length) continue;
+      let path = parts.join("\t");
+      if (!path) { path = tokens[i + 2]; i += 2; }
+      const old = stats[path] ?? { add: 0, del: 0 };
+      stats[path] = { add: old.add + (Number(a) || 0), del: old.del + (Number(d) || 0), binary: a === "-" };
+    }
   }
   return stats;
 }
@@ -225,6 +238,7 @@ export const isMarkdown = (path) => /\.(md|markdown)$/i.test(path);
 
 const NEW_FILE = /^(new file mode|Binary files \/dev\/null and )/;
 const DELETED_FILE = /^(deleted file mode|Binary files .* and \/dev\/null differ$)/;
+const RENAME_FROM = "rename from ";
 
 // One row per diff line, numbered once, so a frame draws only what's on screen.
 // File headers become one "f" row each (dropped when there's a single file, unless `headers`).
@@ -247,7 +261,12 @@ export function diffRows(lines, { headers = false } = {}) {
     if (header) {
       if (image && NEW_FILE.test(line)) image.change = "added";
       else if (image && DELETED_FILE.test(line)) image.change = "deleted";
-      if (line.startsWith("Binary files")) { if (!image) rows.push({ kind: "", text: "Binary file changed" }); }
+      if (line.startsWith(RENAME_FROM)) {
+        const from = line.slice(RENAME_FROM.length);
+        if (image) image.from = from;
+        rows.push({ kind: "", text: `Moved from ${from}` });
+      }
+      else if (line.startsWith("Binary files")) { if (!image) rows.push({ kind: "", text: "Binary file changed" }); }
       else if (line.startsWith("Subproject commit") || line.startsWith("-Subproject") || line.startsWith("+Subproject")) rows.push({ kind: line[0] === "-" ? "-" : line[0] === "+" ? "+" : "", text: line.replace(/^[-+]/, "") });
       continue;
     }
@@ -264,19 +283,20 @@ export function diffRows(lines, { headers = false } = {}) {
 export function diffArgs(item, hasHead) {
   if (item.area === "stash") return [["stash", "show", "-p", "--include-untracked", ...DIFF, item.ref]];
   if (item.area === "commit") return [["show", "--format=", "-p", "--diff-merges=first-parent", ...DIFF, item.hash]];
-  const path = item.area === "all" || item.area === "base" ? [] : ["--", item.path];
-  if (item.area === "base" || item.area === "base-file") return [["diff", item.base, item.head, ...DIFF, ...path]];
+  const path = item.area === "all" || item.area === "base" ? [] : ["--", ...(item.from ? [item.from] : []), item.path];
+  if (item.area === "base" || item.area === "base-file") return [["diff", item.base, item.head, "-M", ...DIFF, ...path]];
   return hasHead ? [["diff", "HEAD", ...DIFF, ...path]] : [["diff", "--cached", ...DIFF, ...path], ["diff", ...DIFF, ...path]];
 }
 
 // Where a file's old and new bytes come from: `{ revs }` (git objects, tried in
 // order) or `{ worktree }` (the file on disk); null when that side has no file.
-export function fileSides(item, { path, change }, hasHead) {
+export function fileSides(item, { path, from = path, change }, hasHead) {
   const revs = (...names) => ({ revs: names.map((name) => `${name}:${path}`) });
+  const oldRevs = (name) => ({ revs: [`${name}:${from}`] });
   let before, after;
-  if (item.area === "commit") { before = revs(`${item.hash}^1`); after = revs(item.hash); }
+  if (item.area === "commit") { before = oldRevs(`${item.hash}^1`); after = revs(item.hash); }
   else if (item.area === "stash") { before = revs(`${item.ref}^1`); after = revs(item.ref, `${item.ref}^3`); }
-  else if (item.base) { before = revs(item.base); after = revs(item.head); }
+  else if (item.base) { before = oldRevs(item.base); after = revs(item.head); }
   else { before = hasHead ? revs("HEAD") : null; after = { worktree: path }; }
   return { before: change === "added" ? null : before, after: change === "deleted" ? null : after };
 }

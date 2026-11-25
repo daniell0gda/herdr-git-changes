@@ -78,7 +78,7 @@ export async function loadDiff(item, { root, on, hasHead, untracked = [] }) {
   if (showsUntracked(item)) {
     for (const path of untracked.slice(0, 50)) lines.push(diffHeader(path), ...(await untrackedLines(root, on, path)));
   }
-  if (isSingleFile(item) && !lines.some((l) => l.startsWith("@@") || l.startsWith("Binary") || /^[-+ ]?Subproject/.test(l)))
+  if (isSingleFile(item) && !lines.some((l) => l.startsWith("@@") || l.startsWith("Binary") || l.startsWith("rename from ") || /^[-+ ]?Subproject/.test(l)))
     lines = [item.submodule ? `Submodule: ${item.submodule}` : item.binary ? "Binary file changed" : "No text diff available"];
   if (!lines.length) lines = ["No changes"];
   return lines.slice(0, MAX).map(clip);

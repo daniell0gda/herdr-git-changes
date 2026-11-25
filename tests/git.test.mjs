@@ -414,5 +414,34 @@ test("a branch's files since its base: only what its commits changed, with their
   assert.ok(all.includes("b/src/new.txt") && all.includes("b/gone.txt") && !all.includes("main-only") && !all.includes("staged.txt"));
 });
 
+test("a branch's moved files: one entry each, diffed against where they were", () => {
+  const r = repo("branch-moves");
+  const body = Array.from({ length: 20 }, (_, i) => `line ${i}`).join("\n") + "\n";
+  write(r, "old.spec.ts", body); write(r, "same.txt", body.toUpperCase()); run(r, ["add", "."]); run(r, ["commit", "-qm", "init"]);
+  run(r, ["switch", "-qc", "feature"]);
+  run(r, ["mv", "old.spec.ts", "new.spec.ts"]); mkdirSync(join(r, "moved")); run(r, ["mv", "same.txt", "moved/same.txt"]);
+  write(r, "new.spec.ts", body.replace("line 3\n", "line three\n")); run(r, ["commit", "-qam", "move"]);
+  const base = baseOf(r), mergeBase = run(r, G.mergeBaseArgs(base)).trim(), head = run(r, ["rev-parse", "HEAD"]).trim();
+  const entries = G.branchEntries(run(r, G.baseNameStatusArgs(mergeBase, head)), run(r, G.baseNumstatArgs(mergeBase, head)));
+  assert.deepEqual(entries.map((e) => [e.path, e.from, e.status, e.add, e.del]), [
+    ["moved/same.txt", "same.txt", "R", 0, 0], ["new.spec.ts", "old.spec.ts", "R", 1, 1],
+  ]);
+  const rowsOf = (e) => G.diffRows(run(r, G.diffArgs({ area: "base-file", base: mergeBase, head, ...e }, true)[0]).split("\n"));
+  const edited = rowsOf(entries[1]);
+  assert.deepEqual(edited.filter((x) => x.kind === "-" || x.kind === "+").map((x) => x.kind + x.text), ["-line 3", "+line three"]);
+  assert.ok(edited.some((x) => x.text === "Moved from old.spec.ts"));
+  assert.deepEqual(rowsOf(entries[0]).map((x) => x.text), ["Moved from same.txt"]);
+  const all = G.diffRows(run(r, G.diffArgs({ area: "base", base: mergeBase, head }, true)[0]).split("\n"));
+  assert.deepEqual(all.filter((x) => x.kind === "f" || x.kind === "").map((x) => x.text),
+    ["moved/same.txt", "Moved from same.txt", "new.spec.ts", "Moved from old.spec.ts"]);
+});
+
+test("an image's old side comes from where it was before a move", () => {
+  const rows = G.diffRows(["diff --git a/old.png b/new.png", "similarity index 90%", "rename from old.png", "rename to new.png", "Binary files a/old.png and b/new.png differ"]);
+  const image = rows.find((x) => x.kind === "img");
+  assert.equal(image.from, "old.png");
+  assert.deepEqual(G.fileSides({ area: "base-file", base: "b1", head: "h1" }, image, true), { before: { revs: ["b1:old.png"] }, after: { revs: ["h1:new.png"] } });
+});
+
 rmSync(base, { recursive: true, force: true });
 console.log(`\n${passed} passed${process.exitCode ? ", some failed" : ""}`);
