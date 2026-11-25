@@ -9,8 +9,9 @@ import { Menu } from "./menu.js";
 import { DiffView } from "./diff.js";
 import { ForgeView } from "./forge-view.js";
 import { CommitPreview } from "./commit-preview.js";
+import { DiffHelp } from "./diff-help.js";
 
-const PARTS = { menu: Menu, diff: DiffView, forge: ForgeView, commit: CommitPreview };
+const PARTS = { menu: Menu, diff: DiffView, forge: ForgeView, commit: CommitPreview, help: DiffHelp };
 
 export default class GitChanges extends View {
   init(_props, cx) {

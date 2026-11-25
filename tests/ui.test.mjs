@@ -1506,6 +1506,20 @@ await test("in two columns, Alt+double-click picks the word on the pressed side;
   assert.equal(words.word, null, "the comma is no word");
   assert.equal(wordMarks(words, "items").length, 0);
   H.shared["git-changes.layout"] = "unified";
+});
+
+await test("the help icon left of the close button opens a dialog about the view, comment sessions and Alt+double-click", async () => {
+  const header = walk(words.render(cx)).find((n) => byId(n, "gc-diff-close") && n.kids.some((k) => k.id === "gc-diff-close"));
+  const ids = header.kids.map((k) => k.id);
+  assert.equal(ids.indexOf("gc-diff-help"), ids.indexOf("gc-diff-close") - 1, "right before the close button");
+  click(words.render(cx), "gc-diff-help");
+  const dialog = H.overlays.at(-1);
+  assert.deepEqual([dialog.kind, dialog.props.role], ["dialog", "help"]);
+  const { DiffHelp } = await import(pathToFileURL(join(lib, "diff-help.js")).href);
+  const help = new DiffHelp(); help.init(cx);
+  const tree = help.render(cx), [text] = walk(tree).filter((n) => n.kind === "markdown").map((n) => n.props.markdown[0]);
+  for (const part of ["Click a line", "Claude Code session", "Alt + double-click", "Esc"]) assert.ok(text.includes(part), `tells about ${part}`);
+  assert.ok(byId(tree, "gch-close"), "it has its own close button");
   H.shared["git-changes.view"] = talkView;
 });
 

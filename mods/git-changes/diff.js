@@ -24,6 +24,7 @@ import { previewImage, pruneCache } from "./images.js";
 import { fitSize, formatBytes } from "./imageinfo.js";
 import { highlightRows, syntaxColors, Token } from "./syntax.js";
 import { wordAt, markWord } from "./words.js";
+import { HELP_WIDTH, HELP_HEIGHT } from "./diff-help.js";
 import { loadMarkdown } from "./markdown.js";
 import { splitMermaid, drawDiagram, diagramKey, isDarkColor, Part } from "./mermaid.js";
 
@@ -538,6 +539,13 @@ export class DiffView {
       .child(div().child(current.name));
   }
 
+  headerButton(t, id, name, tip, press) {
+    return h_flex().id(`gc-diff-${id}`).size(24).items_center().justify_center().rounded(5).cursor_pointer().text_color(t.muted).tooltip(tip)
+      .hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .on_click(press)
+      .child(svg(icon(name)).size(13));
+  }
+
   header(t, layout) {
     const add = this.added, del = this.removed;
     const what = this.item.area === "commit" ? `Commit ${this.item.short} · ${this.item.author} · ${this.item.when}`
@@ -552,10 +560,8 @@ export class DiffView {
         .when(isMarkdownFile(this.item), (e) => e.child(this.previewToggle(t)))
         .child(this.providerButton(t))
         .child(this.toggle(t, layout))
-        .child(h_flex().id("gc-diff-close").size(24).items_center().justify_center().rounded(5).cursor_pointer().text_color(t.muted).tooltip("Close")
-          .hover((s) => s.bg(t.hover).text_color(t.foreground))
-          .on_click(() => { const tab = this.entry()?.tab; if (tab) run("tab.close", { id: tab }); })
-          .child(svg(icon("x")).size(13))))
+        .child(this.headerButton(t, "help", "circle-help", "Help", () => openOverlay({ mod: "git-changes", kind: "dialog", width: HELP_WIDTH, height: HELP_HEIGHT, props: { role: "help" } })))
+        .child(this.headerButton(t, "close", "x", "Close", () => { const tab = this.entry()?.tab; if (tab) run("tab.close", { id: tab }); })))
       .child(h_flex().h(22).px(12).gap(8).items_center().text_size(11).text_color(t.dim)
         .child(div().flex_1().min_w(0).truncate().child(`${what} · ${this.root}`))
         .child(div().child(this.loading ? "Loading…" : "")));

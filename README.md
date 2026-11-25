@@ -155,6 +155,8 @@ the next click.
   sides move together.
 - The switch is in the tab's header and in the panel's toolbar; both change
   every diff tab.
+- **Help:** the ? icon left of the tab's ✕ opens a short help about the view,
+  comments on a line and how to mark a word.
 - **Fold a file:** in a diff of many files (all changes, a commit, a stash),
   each file's header has a checkbox left of its name. Click the header to tick
   it: the file folds to its header line. Click again to unfold it. Each view
