@@ -31,7 +31,17 @@ import { splitMermaid, drawDiagram, diagramKey, isDarkColor, Part } from "./merm
 const MAX = 5000;
 const clip = (line) => (line.length > 4000 ? line.slice(0, 4000) + "… (line truncated)" : line);
 const ROW = 20, HEAD = 24;
-const CONTEXT_STEP = 10, EXPAND_BUTTON = 52;
+const CONTEXT_STEP = 10, STEP_BUTTON = 44, ALL_BUTTON = 26, ALL_ICON = 13;
+const GAP_BUTTONS = [
+  { direction: G.Direction.Up, lines: CONTEXT_STEP, width: STEP_BUTTON, label: `↑ ${CONTEXT_STEP}`, tip: `Show the previous ${CONTEXT_STEP} lines` },
+  { direction: G.Direction.Up, lines: Infinity, width: ALL_BUTTON, icon: "arrow-up-to-line", tip: "Show all the lines above" },
+  { direction: G.Direction.Down, lines: CONTEXT_STEP, width: STEP_BUTTON, label: `↓ ${CONTEXT_STEP}`, tip: `Show the next ${CONTEXT_STEP} lines` },
+  { direction: G.Direction.Down, lines: Infinity, width: ALL_BUTTON, icon: "arrow-down-to-line", tip: "Show all the lines below" },
+];
+const gapButtonAt = (x) => {
+  let end = 0;
+  return GAP_BUTTONS.find((button) => x < (end += button.width)) ?? null;
+};
 const textLines = (text) => (text === null ? null : text ? text.replace(/\n$/, "").split("\n").map(clip) : []);
 const MAX_IMAGES = 20, CAPTION = 22, CELL_PAD = 10, STATE_HEIGHT = 64, MANY_IMAGES_HEIGHT = 320, SPLIT_COLUMNS = 2;
 const THREAD_INDENT = 54, THREAD_MARGIN = 16, MIN_CARD = 240, CHAR_WIDTH = 7.25, LINE = 18;
@@ -384,14 +394,14 @@ export class DiffView {
   }
 
   clickGap(expand, press, cx) {
-    const direction = !press ? null : press.x < EXPAND_BUTTON ? G.Direction.Up : press.x < 2 * EXPAND_BUTTON ? G.Direction.Down : null;
-    if (direction && expand[direction]) this.expandGap(expand, direction, cx);
+    const button = press ? gapButtonAt(press.x) : null;
+    if (button && expand[button.direction]) this.expandGap(expand, button, cx);
   }
 
-  /** Shows CONTEXT_STEP more lines of a gap; the file's text loads first if it isn't here yet. */
-  expandGap({ key, path }, direction, cx) {
+  /** Shows `lines` more lines of a gap; the file's text loads first if it isn't here yet. */
+  expandGap({ key, path }, { direction, lines }, cx) {
     const shown = this.shownContext(), counts = shown.get(key) ?? { path, [G.Direction.Up]: 0, [G.Direction.Down]: 0 };
-    shown.set(key, { ...counts, [direction]: counts[direction] + CONTEXT_STEP });
+    shown.set(key, { ...counts, [direction]: counts[direction] + lines });
     if (this.fileLines.has(path)) { this.rebuildRows(); return; }
     const item = this.item, seen = this.seen, source = { root: this.root, on: this.on, hasHead: this.hasHead };
     cx.spawn(async (cx) => {
@@ -653,15 +663,15 @@ export class DiffView {
         this.code(h_flex().flex_1().min_w(0).whitespace_nowrap(), row, kind === " " ? t.foreground : color, t)));
   }
 
-  /** A hunk header with hidden lines around it: ↑ shows lines above the hunk below, ↓ lines below the hunk above. `clickGap` hit-tests the buttons by x, so each keeps its place when the other is not shown. */
+  /** A hunk header with hidden lines around it: up buttons show lines above the hunk below, down buttons lines below the hunk above. `clickGap` hit-tests the buttons by x, so each keeps its place when another is not shown. */
   gapRow(row, t, key) {
-    const button = (direction, label, tip) => (row.expand[direction]
-      ? h_flex().id(`gc-gap-${key}-${direction}`).w(EXPAND_BUTTON).h_full().flex_none().items_center().justify_center().cursor_pointer()
-        .text_color(t.accent).tooltip(tip).hover((s) => s.bg(t.hover)).child(label)
-      : div().w(EXPAND_BUTTON).flex_none());
+    const button = ({ direction, lines, width, label, icon: name, tip }, i) => (row.expand[direction]
+      ? h_flex().id(`gc-gap-${key}-${i}`).w(width).h_full().flex_none().items_center().justify_center().cursor_pointer()
+        .text_color(t.accent).tooltip(tip).hover((s) => s.bg(t.hover))
+        .child(name ? svg(icon(name)).size(ALL_ICON) : label)
+      : div().w(width).flex_none());
     return h_flex().w_full().h(ROW).flex_none().items_center().bg(t.raised).text_color(t.dim)
-      .child(button(G.Direction.Up, `↑ ${CONTEXT_STEP}`, `Show the previous ${CONTEXT_STEP} lines`))
-      .child(button(G.Direction.Down, `↓ ${CONTEXT_STEP}`, `Show the next ${CONTEXT_STEP} lines`))
+      .children(GAP_BUTTONS.map(button))
       .child(div().flex_1().min_w(0).px(8).truncate().child(row.text));
   }
 

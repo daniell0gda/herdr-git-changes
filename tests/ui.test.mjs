@@ -982,7 +982,7 @@ await test("clicking a file's header in a diff of many files ticks its checkbox 
   assert.ok(inside.every((k) => keysOf().includes(k)), "unfolded again");
 });
 
-await test("a hunk header's ↑ shows the previous 10 lines and ↓ the next 10, from the file, and they stay on a reload", async () => {
+await test("a hunk header's ↑ shows the previous 10 lines and ↓ the next 10, its arrows to a line show all of them, and they stay on a reload", async () => {
   const ctxRepo = join(base, "context"), ctxGit = (...a) => execFileSync("git", a, { cwd: ctxRepo, env, encoding: "utf8" });
   const numbered = (change) => Array.from({ length: 60 }, (_, i) => (i + 1 === change ? "changed" : `line ${i + 1}`)).join("\n") + "\n";
   mkdirSync(ctxRepo); ctxGit("init", "-q", "-b", "main");
@@ -998,14 +998,17 @@ await test("a hunk header's ↑ shows the previous 10 lines and ↓ the next 10,
   };
   const header = view.rows.find((r) => r.kind === "@" && r.text).text;
   assert.ok(shown().includes("↑ 10") && shown().includes("↓ 10"), "the buttons show");
+  const arrows = walk(view.render(cx)).filter((n) => n.kind === "svg").map((n) => n.props.path[0]);
+  assert.ok(arrows.some((p) => p.endsWith("arrow-up-to-line.svg")) && arrows.some((p) => p.endsWith("arrow-down-to-line.svg")), "the arrows to a line show");
   assert.ok(!shown().includes("line 20"), "lines outside the hunk are hidden");
-  press(header, 10); await settle();
+  const [UP_10, UP_ALL, DOWN_10, DOWN_ALL] = [20, 57, 92, 127];
+  press(header, UP_10); await settle();
   assert.ok(shown().includes("line 17") && shown().includes("line 26") && !shown().includes("line 16"), "↑ shows the 10 lines above the hunk");
-  press("", 70); await settle();
+  press("", DOWN_10); await settle();
   assert.ok(shown().includes("line 34") && shown().includes("line 43") && !shown().includes("line 44"), "↓ shows the 10 lines below the hunk");
   const below = view.rows.find((r) => r.text === "line 43");
   assert.deepEqual([below.old, below.number, below.kind], [43, 43, " "], "a shown line has both line numbers");
-  press(header, 70); await settle();
+  press(header, DOWN_10); await settle();
   assert.ok(!shown().includes("line 16"), "a hunk header's ↓ does nothing without a hunk above it");
   writeFileSync(join(ctxRepo, "long.txt"), numbered(31));
   view.reload(cx); await settle();
@@ -1013,6 +1016,12 @@ await test("a hunk header's ↑ shows the previous 10 lines and ↓ the next 10,
   H.shared["git-changes.layout"] = "split";
   assert.ok(texts(view.render(cx)).includes("↑ 10"), "two columns show the buttons too");
   H.shared["git-changes.layout"] = "unified";
+  press(view.rows.find((r) => r.expand?.up).text, UP_ALL); await settle();
+  assert.ok(shown().includes("line 1") && !view.rows.some((r) => r.expand?.up), "the arrow to a line shows every line above, and the header goes");
+  press("", DOWN_ALL); await settle();
+  assert.ok(shown().includes("line 60") && !view.rows.some((r) => r.expand), "the arrow to a line below shows every line to the end of the file");
+  const icons = (tree) => walk(tree).filter((n) => n.kind === "svg").map((n) => n.props.path[0]);
+  assert.ok(!icons(view.render(cx)).some((p) => p.includes("-to-line")), "with nothing hidden, no buttons are left");
 });
 
 await test("a single image diff in one column stacks before over after; in two columns it sits side by side", async () => {

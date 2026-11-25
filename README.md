@@ -164,7 +164,8 @@ the next click.
 - **More lines around a change:** each hunk header has **↑ 10**, which shows
   the 10 unchanged lines before the hunk, and **↓ 10**, which shows the 10
   lines after the hunk above it. A row after the last hunk has **↓ 10** for
-  the lines that follow it. Click again for 10 more. When all the lines
+  the lines that follow it. Click again for 10 more. The arrow to a line
+  next to each one shows all the hidden lines in that direction. When all the lines
   between two hunks show, their header goes and the code reads as one block.
   Each view keeps the lines it shows while the tab is open, also when the
   file changes.
