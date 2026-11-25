@@ -9,6 +9,7 @@ export const HELP_TEXT = `### The view
 Shows the changes of the picked file, commit, stash or branch.
 - Switch between **one column** and **two columns** (before | after) in the header.
 - In a diff of many files, click a file's header to fold it.
+- On a hunk header, **↑ 10** shows 10 more unchanged lines above the change and **↓ 10** 10 more below the change before it. The arrow to a line beside each shows all the hidden lines in that direction.
 
 ### Comments start a chat session
 - **Click a line** to write a comment under it. **Enter** sends, **Shift+Enter** starts a new line, **Esc** closes the box.

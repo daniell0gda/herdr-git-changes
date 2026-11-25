@@ -1560,7 +1560,7 @@ await test("the help icon left of the close button opens a dialog about the view
   const { DiffHelp } = await import(pathToFileURL(join(lib, "diff-help.js")).href);
   const help = new DiffHelp(); help.init(cx);
   const tree = help.render(cx), [text] = walk(tree).filter((n) => n.kind === "markdown").map((n) => n.props.markdown[0]);
-  for (const part of ["Click a line", "Claude Code session", "Alt + double-click", "Esc"]) assert.ok(text.includes(part), `tells about ${part}`);
+  for (const part of ["Click a line", "Claude Code session", "Alt + double-click", "Esc", "↑ 10", "↓ 10"]) assert.ok(text.includes(part), `tells about ${part}`);
   assert.ok(byId(tree, "gch-close"), "it has its own close button");
   H.shared["git-changes.view"] = talkView;
 });
