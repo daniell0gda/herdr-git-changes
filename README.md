@@ -373,17 +373,17 @@ the repository it does three things:
 
 Ask your Herdr agent:
 
-> add the mod at github.com/daniell0gda/herdr-git-changes
+> add the mod at github.com/daniell0gda/surrogo
 
 It reads [RECIPE.md](RECIPE.md), copies `mods/git-changes/` into
 `~/.config/herdr-app/mods/`, and runs `herdr-app check` on it.
 
 From a release (a fixed version): download `git-changes.zip` from the
-[latest release](https://github.com/daniell0gda/herdr-git-changes/releases/latest)
+[latest release](https://github.com/daniell0gda/surrogo/releases/latest)
 and unzip it into the mods folder:
 
 ```sh
-curl -LO https://github.com/daniell0gda/herdr-git-changes/releases/latest/download/git-changes.zip
+curl -LO https://github.com/daniell0gda/surrogo/releases/latest/download/git-changes.zip
 unzip -o git-changes.zip -d ~/.config/herdr-app/mods/
 herdr-app check ~/.config/herdr-app/mods/git-changes
 ```
@@ -394,8 +394,8 @@ To update, do the same with a newer release. The installed version is in
 By hand, from the newest code on `main`:
 
 ```sh
-git clone https://github.com/daniell0gda/herdr-git-changes
-cp -R herdr-git-changes/mods/git-changes ~/.config/herdr-app/mods/
+git clone https://github.com/daniell0gda/surrogo
+cp -R surrogo/mods/git-changes ~/.config/herdr-app/mods/
 herdr-app check ~/.config/herdr-app/mods/git-changes
 ```
 
