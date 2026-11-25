@@ -25,12 +25,14 @@ import { fitSize, formatBytes } from "./imageinfo.js";
 import { highlightRows, syntaxColors, Token } from "./syntax.js";
 import { wordAt, markWord } from "./words.js";
 import { HELP_WIDTH, HELP_HEIGHT } from "./diff-help.js";
-import { loadMarkdown } from "./markdown.js";
+import { loadMarkdown, loadAfterText } from "./markdown.js";
 import { splitMermaid, drawDiagram, diagramKey, isDarkColor, Part } from "./mermaid.js";
 
 const MAX = 5000;
 const clip = (line) => (line.length > 4000 ? line.slice(0, 4000) + "… (line truncated)" : line);
 const ROW = 20, HEAD = 24;
+const CONTEXT_STEP = 10, EXPAND_BUTTON = 52;
+const textLines = (text) => (text === null ? null : text ? text.replace(/\n$/, "").split("\n").map(clip) : []);
 const MAX_IMAGES = 20, CAPTION = 22, CELL_PAD = 10, STATE_HEIGHT = 64, MANY_IMAGES_HEIGHT = 320, SPLIT_COLUMNS = 2;
 const THREAD_INDENT = 54, THREAD_MARGIN = 16, MIN_CARD = 240, CHAR_WIDTH = 7.25, LINE = 18;
 const TEXT_PAD = 4;
@@ -125,7 +127,7 @@ export class DiffView {
     this.comments = []; this.commentsFile = null; this.saving = Promise.resolve(null);
     this.providers = C.cachedProviders(null); this.providersOn = undefined;
     this.asking = new Set(); this.reading = new Set(); this.failures = new Map(); this.target = null; this.threadVersion = 0; this.display = null;
-    this.folds = new Map(); this.alt = false; this.word = null;
+    this.folds = new Map(); this.contexts = new Map(); this.alt = false; this.word = null;
     this.menuActions = {}; this.menuSerial = 0; this.pickSeen = shared("git-changes.pick")?.at; this.pressSide = "right"; this.press = null;
     this.composer = TextareaState.new({ placeholder: "Comment on this line", rows: 3 });
     this.composer.on("submit", (e, cx) => { if (!e.shift) this.send(cx); });
@@ -140,7 +142,7 @@ export class DiffView {
   entry() { return (shared("git-changes.view") ?? {})[this.space]; }
 
   clearRows() {
-    this.rows = []; this.pairs = null; this.signature = null; this.heights = null;
+    this.rows = []; this.diffRows = []; this.fileLines = new Map(); this.pairs = null; this.signature = null; this.heights = null;
     this.imageRows = []; this.added = 0; this.removed = 0; this.markdown = null; this.diagrams = new Map();
   }
 
@@ -370,10 +372,39 @@ export class DiffView {
   }
 
   /** The paths folded in the shown view; each view (all changes, a commit, a stash) keeps its own. */
-  foldedFiles() {
+  foldedFiles() { return this.viewState(this.folds, () => new Set()); }
+
+  /** The unchanged lines shown around the hunks in the shown view, as G.withContext reads them. */
+  shownContext() { return this.viewState(this.contexts, () => new Map()); }
+
+  viewState(states, create) {
     const view = itemTitle(this.item);
-    if (!this.folds.has(view)) this.folds.set(view, new Set());
-    return this.folds.get(view);
+    if (!states.has(view)) states.set(view, create());
+    return states.get(view);
+  }
+
+  clickGap(expand, press, cx) {
+    const direction = !press ? null : press.x < EXPAND_BUTTON ? G.Direction.Up : press.x < 2 * EXPAND_BUTTON ? G.Direction.Down : null;
+    if (direction && expand[direction]) this.expandGap(expand, direction, cx);
+  }
+
+  /** Shows CONTEXT_STEP more lines of a gap; the file's text loads first if it isn't here yet. */
+  expandGap({ key, path }, direction, cx) {
+    const shown = this.shownContext(), counts = shown.get(key) ?? { path, [G.Direction.Up]: 0, [G.Direction.Down]: 0 };
+    shown.set(key, { ...counts, [direction]: counts[direction] + CONTEXT_STEP });
+    if (this.fileLines.has(path)) { this.rebuildRows(); return; }
+    const item = this.item, seen = this.seen, source = { root: this.root, on: this.on, hasHead: this.hasHead };
+    cx.spawn(async (cx) => {
+      const lines = textLines(await loadAfterText(item, path, source));
+      if (seen !== this.seen) return;
+      this.fileLines.set(path, lines); this.rebuildRows(); cx.notify();
+    });
+  }
+
+  async loadShownFiles(item, source) {
+    const paths = [...new Set([...this.shownContext().values()].map((gap) => gap.path))];
+    const texts = await Promise.all(paths.map((path) => loadAfterText(item, path, source)));
+    return new Map(paths.map((path, i) => [path, textLines(texts[i])]));
   }
 
   toggleFold(path) {
@@ -390,6 +421,7 @@ export class DiffView {
     else if (key.startsWith("r")) {
       const index = Number(key.slice(1)), shown = this.baseRow(index);
       if (shown?.kind === "f") { this.toggleFold(shown.text); cx.notify(); return; }
+      if (shown?.expand) { this.clickGap(shown.expand, press, cx); cx.notify(); return; }
       const row = this.lineAt(index);
       if (!row) return;
       const threads = this.display?.placed.get(row);
@@ -471,8 +503,9 @@ export class DiffView {
         const signature = lines.join("\n");
         if (signature === this.signature && !this.error) { changed = false; return; }
         const markdown = isMarkdownFile(item) ? await loadMarkdown(item, { root, on, hasHead }) : null;
+        const fileLines = await this.loadShownFiles(item, { root, on, hasHead });
         if (seen !== this.seen) return;
-        this.signature = signature; this.markdown = markdown;
+        this.signature = signature; this.markdown = markdown; this.fileLines = fileLines; this.hasHead = hasHead;
         this.showLines(lines, item);
         this.error = null;
         this.loadImages(item, { root, on, hasHead }, seen, cx);
@@ -483,7 +516,13 @@ export class DiffView {
   }
 
   showLines(lines, item) {
-    this.rows = highlightRows(C.attachPaths(G.diffRows(lines, { headers: !isSingleFile(item) }), item)); this.pairs = null; this.heights = null;
+    this.diffRows = G.diffRows(lines, { headers: !isSingleFile(item) });
+    this.rebuildRows(item);
+  }
+
+  rebuildRows(item = this.item) {
+    const rows = G.withContext(this.diffRows, this.shownContext(), this.fileLines, isSingleFile(item) ? item.path : null);
+    this.rows = highlightRows(C.attachPaths(rows, item)); this.pairs = null; this.heights = null;
     this.imageRows = this.rows.filter((r) => r.kind === "img");
     this.added = this.rows.filter((r) => r.kind === "+").length;
     this.removed = this.rows.filter((r) => r.kind === "-").length;
@@ -601,6 +640,7 @@ export class DiffView {
   unifiedRow(row, t, key) {
     const { kind, old, number, text } = row;
     if (kind === "f") return this.fileHeader(row, t);
+    if (kind === "@" && row.expand) return this.gapRow(row, t, key);
     if (kind === "@") return div().w_full().px(12).h(ROW).flex_none().truncate().bg(t.raised).text_color(t.dim).child(text);
     const color = kind === "+" ? t.ansi2 : kind === "-" ? t.ansi1 : t.foreground;
     const tint = kind === "+" || kind === "-" ? color + "18" : null;
@@ -611,6 +651,18 @@ export class DiffView {
       .child(this.lineText(tint, t,
         div().w(SIGN).flex_none().text_color(color).child(kind === "+" || kind === "-" ? kind : ""),
         this.code(h_flex().flex_1().min_w(0).whitespace_nowrap(), row, kind === " " ? t.foreground : color, t)));
+  }
+
+  /** A hunk header with hidden lines around it: ↑ shows lines above the hunk below, ↓ lines below the hunk above. `clickGap` hit-tests the buttons by x, so each keeps its place when the other is not shown. */
+  gapRow(row, t, key) {
+    const button = (direction, label, tip) => (row.expand[direction]
+      ? h_flex().id(`gc-gap-${key}-${direction}`).w(EXPAND_BUTTON).h_full().flex_none().items_center().justify_center().cursor_pointer()
+        .text_color(t.accent).tooltip(tip).hover((s) => s.bg(t.hover)).child(label)
+      : div().w(EXPAND_BUTTON).flex_none());
+    return h_flex().w_full().h(ROW).flex_none().items_center().bg(t.raised).text_color(t.dim)
+      .child(button(G.Direction.Up, `↑ ${CONTEXT_STEP}`, `Show the previous ${CONTEXT_STEP} lines`))
+      .child(button(G.Direction.Down, `↓ ${CONTEXT_STEP}`, `Show the next ${CONTEXT_STEP} lines`))
+      .child(div().flex_1().min_w(0).px(8).truncate().child(row.text));
   }
 
   code(element, row, plain, t) {

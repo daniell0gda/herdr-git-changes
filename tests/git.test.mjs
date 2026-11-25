@@ -92,6 +92,32 @@ test("diffRows numbers lines and keeps file headers when asked", () => {
   assert.equal(G.diffRows(lines, { headers: true })[0].kind, "f");
 });
 
+test("withContext shows the unchanged lines above and below each hunk, with both line numbers", () => {
+  const file = Array.from({ length: 41 }, (_, i) => `l${i + 1}`);
+  const diff = G.diffRows(["@@ -2,6 +2,7 @@", " l2", " l3", " l4", "+l5", " l6", " l7", " l8", "@@ -27,7 +28,7 @@", " l28", " l29", " l30", "-x", "+l31", " l32", " l33", " l34"]);
+  const shownOf = (rows) => rows.map((r) => (r.expand ? `@${r.expand.up ? "↑" : ""}${r.expand.down ? "↓" : ""}` : r.kind === "@" ? "@" : r.number));
+  const expand = (shown) => G.withContext(diff, new Map(Object.entries(shown)), new Map([["a.ts", file]]), "a.ts");
+  const collapsed = expand({});
+  assert.deepEqual(shownOf(collapsed).filter((s) => typeof s === "string"), ["@↑", "@↑↓", "@↓"], "the leading gap grows up, the middle both ways, the trailing gap down");
+  assert.equal(collapsed.at(-1).text, "", "after the last hunk, an empty row holds the button");
+  assert.deepEqual(collapsed[0].expand, { key: "a.ts:0", path: "a.ts", up: true, down: false });
+
+  const opened = expand({ "a.ts:1": { up: 10, down: 10 }, "a.ts:2": { down: 5 } });
+  const middle = opened.slice(opened.findIndex((r) => r.number === 8) + 1, opened.findIndex((r) => r.number === 28));
+  assert.deepEqual(middle.map((r) => r.number), Array.from({ length: 19 }, (_, i) => i + 9), "a gap shown in full loses its header");
+  assert.deepEqual(middle.map((r) => [r.kind, r.text]).slice(0, 2), [[" ", "l9"], [" ", "l10"]]);
+  assert.deepEqual([middle[0].old, middle.at(-1).old], [8, 26], "old line numbers follow the line the first hunk added");
+  assert.deepEqual(shownOf(opened).slice(-6), [35, 36, 37, 38, 39, "@↓"], "5 lines after the last hunk, then its button");
+
+  const partly = expand({ "a.ts:0": { up: 10 } });
+  assert.deepEqual(shownOf(partly).slice(0, 3), [1, 2, 3], "the leading gap holds one line: shown, its header goes");
+  assert.deepEqual(shownOf(expand({ "a.ts:0": { up: 20 }, "a.ts:2": { down: 20 } })).slice(-2), [40, 41], "the trailing gap ends at the file's last line");
+  assert.deepEqual(shownOf(G.withContext(diff, new Map([["a.ts:2", { down: 10 }]]), new Map(), "a.ts")).at(-1), "@↓", "without the file's text the buttons stay, and nothing is added");
+
+  const added = G.diffRows(["diff --git a/n b/n", "@@ -0,0 +1,2 @@", "+a", "+b", "diff --git a/d b/d", "@@ -1,2 +0,0 @@", "-a", "-b"], { headers: true });
+  assert.ok(G.withContext(added, new Map(), new Map()).every((r) => !r.expand), "an added or deleted file is shown whole, so it has no gaps");
+});
+
 test("image files get an image row in place of 'Binary file changed': modified, added, deleted, and an SVG with its text", () => {
   const r = repo("images");
   write(r, "keep.png", Buffer.from([137, 80, 78, 71, 1])); write(r, "gone.gif", Buffer.from("GIF89a\0\0\0\0")); write(r, "logo.svg", "<svg>\n</svg>\n"); write(r, "blob.bin", Buffer.from([0, 1, 2]));

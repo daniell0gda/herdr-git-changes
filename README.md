@@ -161,6 +161,13 @@ the next click.
   each file's header has a checkbox left of its name. Click the header to tick
   it: the file folds to its header line. Click again to unfold it. Each view
   keeps its own folded files while the tab is open.
+- **More lines around a change:** each hunk header has **↑ 10**, which shows
+  the 10 unchanged lines before the hunk, and **↓ 10**, which shows the 10
+  lines after the hunk above it. A row after the last hunk has **↓ 10** for
+  the lines that follow it. Click again for 10 more. When all the lines
+  between two hunks show, their header goes and the code reads as one block.
+  Each view keeps the lines it shows while the tab is open, also when the
+  file changes.
 - **Syntax colors** for TypeScript and JavaScript, C# and HTML, from the
   terminal theme's colors: keywords, types, calls, strings, numbers and
   comments, or tags, attributes and their values. Changed lines keep their red

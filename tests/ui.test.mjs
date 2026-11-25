@@ -982,6 +982,39 @@ await test("clicking a file's header in a diff of many files ticks its checkbox 
   assert.ok(inside.every((k) => keysOf().includes(k)), "unfolded again");
 });
 
+await test("a hunk header's ↑ shows the previous 10 lines and ↓ the next 10, from the file, and they stay on a reload", async () => {
+  const ctxRepo = join(base, "context"), ctxGit = (...a) => execFileSync("git", a, { cwd: ctxRepo, env, encoding: "utf8" });
+  const numbered = (change) => Array.from({ length: 60 }, (_, i) => (i + 1 === change ? "changed" : `line ${i + 1}`)).join("\n") + "\n";
+  mkdirSync(ctxRepo); ctxGit("init", "-q", "-b", "main");
+  writeFileSync(join(ctxRepo, "long.txt"), numbered(0)); ctxGit("add", "."); ctxGit("commit", "-qm", "init");
+  writeFileSync(join(ctxRepo, "long.txt"), numbered(30));
+  const view = await openDiff({ area: "file", path: "long.txt", status: "M", staged: "none" }, ctxRepo);
+  const shown = () => texts(view.render(cx));
+  const press = (text, x) => {
+    const tree = view.render(cx), list = walk(tree).find((n) => n.kind === "list"), at = list.keys.findIndex((k) => view.baseRow(Number(k.slice(1)))?.text === text);
+    assert.ok(at >= 0, `no gap row "${text}"`);
+    byId(tree, `${view.listId}-rows`).handlers["mouse_down:left"]({ local_position: { x, y: 10 }, modifiers: {} });
+    list.handlers.item_click(list.keys[at], cx);
+  };
+  const header = view.rows.find((r) => r.kind === "@" && r.text).text;
+  assert.ok(shown().includes("↑ 10") && shown().includes("↓ 10"), "the buttons show");
+  assert.ok(!shown().includes("line 20"), "lines outside the hunk are hidden");
+  press(header, 10); await settle();
+  assert.ok(shown().includes("line 17") && shown().includes("line 26") && !shown().includes("line 16"), "↑ shows the 10 lines above the hunk");
+  press("", 70); await settle();
+  assert.ok(shown().includes("line 34") && shown().includes("line 43") && !shown().includes("line 44"), "↓ shows the 10 lines below the hunk");
+  const below = view.rows.find((r) => r.text === "line 43");
+  assert.deepEqual([below.old, below.number, below.kind], [43, 43, " "], "a shown line has both line numbers");
+  press(header, 70); await settle();
+  assert.ok(!shown().includes("line 16"), "a hunk header's ↓ does nothing without a hunk above it");
+  writeFileSync(join(ctxRepo, "long.txt"), numbered(31));
+  view.reload(cx); await settle();
+  assert.ok(shown().includes("line 26") && shown().includes("line 43"), "the shown lines stay when the file changes");
+  H.shared["git-changes.layout"] = "split";
+  assert.ok(texts(view.render(cx)).includes("↑ 10"), "two columns show the buttons too");
+  H.shared["git-changes.layout"] = "unified";
+});
+
 await test("a single image diff in one column stacks before over after; in two columns it sits side by side", async () => {
   const view = await openDiff({ area: "file", path: "art/hero.png", status: "M", staged: "none" });
   view.bodyWidth = 800; view.bodyHeight = 600; view.imageVersion++;

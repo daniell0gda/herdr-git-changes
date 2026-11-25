@@ -257,7 +257,7 @@ export function diffRows(lines, { headers = false } = {}) {
       continue;
     }
     const hunk = /^@@+ -(\d+)(?:,\d+)?(?: -\d+(?:,\d+)?)* \+(\d+)/.exec(line);
-    if (hunk) { old = +hunk[1]; next = +hunk[2]; header = false; rows.push({ kind: "@", text: line }); continue; }
+    if (hunk) { old = +hunk[1]; next = +hunk[2]; header = false; rows.push({ kind: "@", text: line, range: hunkRange(line) }); continue; }
     if (header) {
       if (image && NEW_FILE.test(line)) image.change = "added";
       else if (image && DELETED_FILE.test(line)) image.change = "deleted";
@@ -277,6 +277,70 @@ export function diffRows(lines, { headers = false } = {}) {
     else if (line) rows.push({ kind: "", text: line });
   }
   return files > 1 || headers ? rows : rows.filter((r) => r.kind !== "f");
+}
+
+const TWO_WAY_HUNK = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
+
+/**
+ * The first line and line count of a hunk on each side; `wholeFile` when one side
+ * is empty, so the hunk holds the whole file. Null for a combined (merge) hunk.
+ */
+function hunkRange(line) {
+  const m = TWO_WAY_HUNK.exec(line);
+  if (!m) return null;
+  const [old, oldLines, next, nextLines] = [m[1], m[2] ?? "1", m[3], m[4] ?? "1"].map(Number);
+  return { old: oldLines ? old : old + 1, oldLines, next: nextLines ? next : next + 1, nextLines, wholeFile: old === 0 || next === 0 };
+}
+
+export const Direction = Object.freeze({ Up: "up", Down: "down" });
+
+const contextRow = (lines, number, offset) => ({ kind: " ", old: number + offset, number, text: lines[number - 1] || " " });
+
+function addGap(out, { key, path, header, first, end, offset, lines, shown, up, down }) {
+  const size = Math.max(0, end - first + 1);
+  const top = lines ? Math.min(shown[Direction.Down], size) : 0;
+  const bottom = lines ? Math.min(shown[Direction.Up], size - top) : 0;
+  const hidden = size - top - bottom;
+  for (let i = 0; i < top; i++) out.push(contextRow(lines, first + i, offset));
+  if (hidden > 0) out.push({ ...(header ?? { kind: "@", text: "" }), expand: { key, path, [Direction.Up]: up, [Direction.Down]: down } });
+  else if (header && size === 0) out.push(header);
+  for (let i = bottom; i > 0; i--) out.push(contextRow(lines, end - i + 1, offset));
+}
+
+/**
+ * The diff's rows with unchanged lines shown around the hunks. Gap `i` of a file
+ * holds the unchanged lines before its hunk `i`; its last gap holds the lines after
+ * its last hunk. `shown` maps a gap's key to { up, down }: how many of its lines show
+ * at its bottom (before the hunk below) and at its top (after the hunk above).
+ * `files` maps a path to the lines of its new version; a file not in it shows no
+ * extra lines. `path` names the file of a diff without file headers.
+ * A gap with hidden lines keeps its hunk header, with `expand` { key, path, up, down }
+ * telling which way it can grow; a gap shown in full has no header.
+ */
+export function withContext(rows, shown, files, path = null) {
+  const out = [];
+  let file = path, index = 0, last = null;
+  const gap = (fields) => {
+    const key = `${file}:${index++}`;
+    addGap(out, { key, path: file, lines: files.get(file) ?? null, shown: { [Direction.Up]: 0, [Direction.Down]: 0, ...shown.get(key) }, ...fields });
+  };
+  const endFile = () => {
+    if (last && !last.wholeFile) {
+      const first = last.next + last.nextLines, lines = files.get(file);
+      gap({ header: null, first, end: lines ? lines.length : Infinity, offset: last.old + last.oldLines - first, up: false, down: true });
+    }
+    index = 0; last = null;
+  };
+  for (const row of rows) {
+    if (row.kind === "f") { endFile(); file = row.text; out.push(row); continue; }
+    if (row.kind !== "@" || !row.range) { out.push(row); continue; }
+    const range = row.range;
+    if (range.wholeFile) out.push(row);
+    else gap({ header: row, first: last ? last.next + last.nextLines : 1, end: range.next - 1, offset: range.old - range.next, up: true, down: Boolean(last) });
+    last = range;
+  }
+  endFile();
+  return out;
 }
 
 // What a selection shows: a file against HEAD, a stash, a commit, or everything.
