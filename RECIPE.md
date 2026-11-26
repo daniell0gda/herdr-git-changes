@@ -216,7 +216,11 @@ hint in 11px `dim`. Danger items are `ansi1`.
   text together.
 - **Find in the diff tab.** The tab's root tracks its own focus handle and
   focuses it on the `"focus"` command, so its `on_key_down` hears keys.
-  `ctrl-f` (or `cmd-f`) shows a find bar with an `InputState` and focuses it,
+  Herdr doesn't focus that handle when the tab is selected, so a key reaches
+  it only after a click. A `"mod:git-changes": { "ctrl-f": "git-changes.find" }`
+  section in `keys.json` sends `"find"` to the shown copies' `nextCommand()`
+  instead; the panel ignores it, the diff tab opens the bar. `ctrl-f` (or
+  `cmd-f`) shows a find bar with an `InputState` and focuses it,
   its text selected. Every code line of the shown rows (`C.linesOf`, so both
   sides of a pair, folded files left out) is searched for the text, ignoring
   case, by a `giu` regular expression of the escaped text, which keeps each

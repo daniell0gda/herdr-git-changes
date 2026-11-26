@@ -91,7 +91,7 @@ export const terminals = () => H.terminals;
 export const readTextFile = (p) => H.read(p);
 export const writeTextFile = (p, text, expected) => H.write(p, text, expected);
 export const watchFolder = () => new Promise(() => {});
-export const nextCommand = () => new Promise(() => {});
+export const nextCommand = () => new Promise((resolve) => H.listening.push(resolve));
 `);
 
 globalThis.localStorage = { m: {}, getItem(k) { return this.m[k] ?? null; }, setItem(k, v) { this.m[k] = String(v); } };
@@ -104,7 +104,7 @@ const GIO = {
   mime: "Default application for “text/plain”: editor.desktop\nRegistered applications:\n\tviewer.desktop\n\teditor.desktop\n\tmissing.desktop\nRecommended applications:\n\teditor.desktop\n",
 };
 const H = globalThis.__herdr = {
-  spaces: [], panes: [], focused: null, shared: {}, runs: [], notes: [], overlays: [], currentProps: {},
+  spaces: [], panes: [], focused: null, shared: {}, runs: [], notes: [], overlays: [], currentProps: {}, listening: [],
   calls: 0, hostCalls: 0, rendering: false, visibleRows: Infinity, platform: "linux", appHome: join(base, "app-home"), home: join(base, "home"), execs: [],
   props: () => H.currentProps,
   hyprctl: (args) => ({ code: 0, stdout: args[0] === "-j" ? "[]" : "ok\n", stderr: "" }),
@@ -1620,6 +1620,18 @@ await test("Esc closes the bar, removes the marks and gives the keyboard back; C
   assert.equal(foundMarks(words).length, 4);
   click(words.render(cx), "gc-diff-search-close");
   assert.ok(!byId(words.render(cx), "gc-diff-search"), "the close button closes it too");
+});
+
+await test("the find command from keys.json opens the bar without a click, while the view doesn't have the keyboard", async () => {
+  words.searchBox.focused = false;
+  const sendCommand = async (command) => { const waiting = H.listening.splice(0); waiting.forEach((resolve) => resolve(command)); await settle(); };
+  await sendCommand("find");
+  assert.ok(byId(words.render(cx), "gc-diff-search"), "the bar shows");
+  assert.ok(words.searchBox.focused, "and takes the keyboard");
+  pressDiffKey(words, "escape");
+  await sendCommand("find");
+  assert.ok(byId(words.render(cx), "gc-diff-search"), "the view keeps listening");
+  pressDiffKey(words, "escape");
 });
 
 await test("the help icon left of the close button opens a dialog about the view, comment sessions and Alt+double-click", async () => {

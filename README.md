@@ -179,7 +179,8 @@ the next click.
   hover or new-comment icon. Alt+double-click off a word, or press Esc, to
   clear the mark. A line indented with tabs can pick a word a few characters
   off.
-- **Find:** Ctrl+F (or ⌘F) opens a find bar under the header. Each match in
+- **Find:** Ctrl+F (or ⌘F) opens a find bar under the header (see
+  [Ctrl+F without a click](#ctrlf-in-the-diff-tab-without-a-click)). Each match in
   the code, in any case, gets a yellow background, and the bar counts them
   (`2 of 7`). Enter goes to the next match and Shift+Enter to the one before;
   the diff scrolls to it, and it gets a stronger background. In two columns
@@ -449,6 +450,19 @@ The tab bar's Changes button then opens this panel. A key bound to show the
 Keep the `panel` column around `panel-body`. The tab bar shows and hides the
 panel through it, and without it every click toasts
 `layout.show failed: no node "panel"`.
+
+### Ctrl+F in the diff tab without a click
+
+Herdr doesn't give the diff tab the keyboard when you select it, so Ctrl+F
+works there only after a click in the tab. To make it work at once, bind the
+key for this mod in `~/.config/herdr-app/keys.json`:
+
+```json
+"mod:git-changes": { "ctrl-f": "git-changes.find" }
+```
+
+Add it next to the `global` and `terminal` sections. A `keys.json` you edit
+stays yours: Herdr no longer adds its new default keys to it.
 
 ### Or open it as a pane or a tab
 

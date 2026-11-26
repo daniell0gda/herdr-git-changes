@@ -165,7 +165,15 @@ export class DiffView {
     this.searchBox.on("submit", (e, cx) => this.stepFound(e.shift ? -1 : 1, cx));
     this.searchBox.on("focus", () => { this.searchFocused = true; });
     this.searchBox.on("blur", () => { this.searchFocused = false; });
-    cx.spawn(async () => { for (;;) if (await nextCommand() === "focus") this.handle.focus(); });
+    cx.spawn(async (cx) => { for (;;) this.runCommand(await nextCommand(), cx); });
+  }
+
+  /** Runs a command from Herdr: `focus` when it hands this tab the keyboard, `find` from a `mod:git-changes` key binding. */
+  runCommand(command, cx) {
+    if (command === "focus") this.handle.focus();
+    else if (command === "find" && this.item) this.openSearch();
+    else return;
+    cx.notify();
   }
 
   entry() { return (shared("git-changes.view") ?? {})[this.space]; }
