@@ -44,6 +44,7 @@ function el(kind) {
       if (k.startsWith("on_") && H.rendering) throw new Error("a handler (" + k + ") inside a virtual list renderer");
       if (k.startsWith("on_")) t.handlers[k.slice(3) + (typeof a[0] === "string" && a.length > 1 ? ":" + a[0] : "")] = a.at(-1);
       if (k === "hover") { t.hoverStyle = el("hover"); a[0](t.hoverStyle); }
+      if (k === "highlight_range") (t.highlights ??= []).push(a);
       t.props[k] = a;
       return proxy;
     };
@@ -1099,6 +1100,15 @@ await test("a markdown file's diff can switch to its rendered preview and back",
   assert.deepEqual(markdownShown(view.render(cx)), []);
 });
 
+await test("in the preview, Ctrl+F marks the matches in the rendered markdown", async () => {
+  const view = await preview({ area: "file", path: "guide.md", status: "M", staged: "none" });
+  byId(view.render(cx), "git-changes-diff").handlers.key_down({ key: "f", keystroke: "ctrl-f" }, cx);
+  view.searchBox.set_value("GUIDE"); view.searchBox.handlers.change({}, cx);
+  const tree = view.render(cx), [shown] = walk(tree).filter((n) => n.kind === "markdown");
+  assert.deepEqual(shown.highlights, [[2, 7, "#ansi3055"]], "the heading's word, by its place in the source");
+  assert.ok(texts(tree).includes("1 match"), "a count only: the preview can't scroll to a match");
+});
+
 await test("in two columns, the preview shows the markdown before and after", async () => {
   const view = await preview({ area: "file", path: "guide.md", status: "M", staged: "none" });
   H.shared["git-changes.layout"] = "split";
@@ -1550,6 +1560,68 @@ await test("in two columns, Alt+double-click picks the word on the pressed side;
   H.shared["git-changes.layout"] = "unified";
 });
 
+const FOUND = "#ansi3055", CURRENT_FOUND = "#ansi30bb";
+const pressDiffKey = (view, key, keystroke = key) => diffRoot(view).handlers.key_down({ key, keystroke }, cx);
+const search = (view, text) => { view.searchBox.set_value(text); view.searchBox.handlers.change({}, cx); };
+const foundMarks = (view) => walk(diffList(view.render(cx))).filter((n) => n.kids.length === 1 && typeof n.kids[0] === "string" && [FOUND, CURRENT_FOUND].includes(n.props.bg?.[0]));
+const scrolledToLine = (view) => diffList(view.render(cx)).keys[H.scrolledTo];
+
+await test("Ctrl+F opens a find bar that marks every match in any case, the current one stronger, and scrolls to it", async () => {
+  assert.ok(!byId(words.render(cx), "gc-diff-search"), "no bar before Ctrl+F");
+  pressDiffKey(words, "f", "ctrl-f");
+  assert.ok(byId(words.render(cx), "gc-diff-search"), "the bar shows");
+  assert.ok(words.searchBox.focused, "and takes the keyboard");
+  search(words, "TOTAL");
+  const marks = foundMarks(words);
+  assert.deepEqual(marks.map((n) => n.kids[0]), ["total", "total", "total", "total"], "one on each line");
+  assert.deepEqual(marks.map((n) => n.props.bg[0]), [CURRENT_FOUND, FOUND, FOUND, FOUND], "the first is the current one");
+  assert.ok(texts(words.render(cx)).includes("1 of 4"));
+  assert.equal(scrolledToLine(words), lineKey(words, "const total = sum(items);"));
+  assert.equal(wordMarks(words, "sum").length, 0, "other text keeps its look");
+});
+
+await test("Enter goes to the next match and Shift+Enter to the one before, both round the ends", async () => {
+  words.searchBox.handlers.submit({}, cx);
+  assert.ok(texts(words.render(cx)).includes("2 of 4"));
+  assert.deepEqual(foundMarks(words).map((n) => n.props.bg[0]), [FOUND, CURRENT_FOUND, FOUND, FOUND]);
+  words.searchBox.handlers.submit({ shift: true }, cx);
+  words.searchBox.handlers.submit({ shift: true }, cx);
+  assert.ok(texts(words.render(cx)).includes("4 of 4"), "back past the first match to the last");
+  assert.equal(scrolledToLine(words), lineKey(words, "log(total, items);"));
+  words.searchBox.handlers.submit({}, cx);
+  assert.ok(texts(words.render(cx)).includes("1 of 4"), "on past the last match to the first");
+});
+
+await test("in two columns both sides are searched; no match says so", async () => {
+  H.shared["git-changes.layout"] = "split";
+  try {
+    search(words, "items");
+    assert.equal(foundMarks(words).length, 3);
+    assert.ok(texts(words.render(cx)).includes("1 of 3"));
+    search(words, "zzz");
+    assert.equal(foundMarks(words).length, 0);
+    assert.ok(texts(words.render(cx)).includes("No matches"));
+  } finally { H.shared["git-changes.layout"] = "unified"; }
+});
+
+await test("Esc closes the bar, removes the marks and gives the keyboard back; Ctrl+F opens it again with the same text", async () => {
+  search(words, "total");
+  const handle = words.handle;
+  let focused = 0;
+  words.handle = { focus() { focused++; } };
+  try {
+    pressDiffKey(words, "escape");
+    assert.ok(!byId(words.render(cx), "gc-diff-search"), "the bar is gone");
+    assert.equal(foundMarks(words).length, 0, "and the marks with it");
+    assert.ok(focused > 0, "the view has the keyboard");
+  } finally { words.handle = handle; }
+  pressDiffKey(words, "f", "ctrl-f");
+  assert.equal(words.searchBox.value(), "total");
+  assert.equal(foundMarks(words).length, 4);
+  click(words.render(cx), "gc-diff-search-close");
+  assert.ok(!byId(words.render(cx), "gc-diff-search"), "the close button closes it too");
+});
+
 await test("the help icon left of the close button opens a dialog about the view, comment sessions and Alt+double-click", async () => {
   const header = walk(words.render(cx)).find((n) => byId(n, "gc-diff-close") && n.kids.some((k) => k.id === "gc-diff-close"));
   const ids = header.kids.map((k) => k.id);
@@ -1560,7 +1632,7 @@ await test("the help icon left of the close button opens a dialog about the view
   const { DiffHelp } = await import(pathToFileURL(join(lib, "diff-help.js")).href);
   const help = new DiffHelp(); help.init(cx);
   const tree = help.render(cx), [text] = walk(tree).filter((n) => n.kind === "markdown").map((n) => n.props.markdown[0]);
-  for (const part of ["Click a line", "Claude Code session", "Alt + double-click", "Esc", "↑ 10", "↓ 10"]) assert.ok(text.includes(part), `tells about ${part}`);
+  for (const part of ["Click a line", "Claude Code session", "Alt + double-click", "Esc", "↑ 10", "↓ 10", "Ctrl+F", "Shift+Enter"]) assert.ok(text.includes(part), `tells about ${part}`);
   assert.ok(byId(tree, "gch-close"), "it has its own close button");
   H.shared["git-changes.view"] = talkView;
 });

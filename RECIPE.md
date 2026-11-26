@@ -214,6 +214,22 @@ hint in 11px `dim`. Danger items are `ansi1`.
   again, at once and 150 ms later. In menus: ↑/↓, ↩ or space, Esc. In two
   columns, a sideways scroll (trackpad, or Shift+wheel) moves both columns'
   text together.
+- **Find in the diff tab.** The tab's root tracks its own focus handle and
+  focuses it on the `"focus"` command, so its `on_key_down` hears keys.
+  `ctrl-f` (or `cmd-f`) shows a find bar with an `InputState` and focuses it,
+  its text selected. Every code line of the shown rows (`C.linesOf`, so both
+  sides of a pair, folded files left out) is searched for the text, ignoring
+  case, by a `giu` regular expression of the escaped text, which keeps each
+  match's length. `markFound` cuts the line's tokens at each match, after
+  `markWord`, so a piece can carry both marks; a match gets `ansi3` at `55`
+  alpha, the current one at `bb`. The input's `submit` event steps: Enter
+  forward, Shift+Enter back, both wrapping; the list's
+  `VirtualListScrollHandle` centers the match's row. Herdr's own palette
+  handles Enter the same way, through `submit`, not `on_key_down`. In the
+  Markdown preview each `TextView` gets `highlight_range` for every match in
+  its source; the bar only counts them there, as a `TextView` can't be
+  scrolled from code. Esc closes, in order: the find bar while it has the
+  keyboard, the comment box, the find bar, the marked word.
 - **The diff tab follows the files.** It watches the repository (local) or
   polls it every 10s, and reloads, except for a commit, which can't change.
   A pick that arrives while one is loading is loaded right after.

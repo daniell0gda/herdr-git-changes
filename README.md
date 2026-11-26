@@ -29,8 +29,8 @@ picks its own Changes panel, so you point your layouts at this one
   GitHub or GitLab remote, with labels, a detail view and comments, and a CI
   status chip for the current branch. Needs `gh` or `glab`.
 - **[Diff in the main area](#the-diff-in-the-main-area):** one column or two
-  (before | after), syntax colors for TypeScript, JavaScript, C# and HTML, and
-  images shown as pictures, before and after.
+  (before | after), syntax colors for TypeScript, JavaScript, C# and HTML,
+  images shown as pictures, before and after, and Ctrl+F to find text.
 - **[Markdown preview](#the-diff-in-the-main-area):** a Changes | Preview
   switch on a Markdown file's diff shows the file rendered, the new version or
   before | after.
@@ -179,6 +179,13 @@ the next click.
   hover or new-comment icon. Alt+double-click off a word, or press Esc, to
   clear the mark. A line indented with tabs can pick a word a few characters
   off.
+- **Find:** Ctrl+F (or ⌘F) opens a find bar under the header. Each match in
+  the code, in any case, gets a yellow background, and the bar counts them
+  (`2 of 7`). Enter goes to the next match and Shift+Enter to the one before;
+  the diff scrolls to it, and it gets a stronger background. In two columns
+  both sides are searched. In the Markdown preview the matches are marked in
+  the rendered text, but the view doesn't scroll to them. Esc or the bar's ✕
+  closes it; Ctrl+F opens it again with the same text.
 - **Images** (PNG, JPEG, GIF, WebP, SVG and BMP) show as pictures, with their
   size and file size. A changed image shows *Before* and *After*: stacked in
   one column, side by side in two columns, so the same switch compares them.

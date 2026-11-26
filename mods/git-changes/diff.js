@@ -15,15 +15,15 @@
 // replacements pair by position inside one block, never across a hunk or a
 // context line. That code isn't used here; git.js has its own splitRows().
 import { div, svg, image } from "gpui-kit";
-import { v_flex, h_flex, Scrollbar, v_virtual_list, TextareaState, Textarea, TextView } from "gpui-base";
-import { exec, readTextFile, watchFolder, theme, settings, props, shared, setShared, spaces, panes, run, notify, openOverlay, terminals } from "herdr";
+import { v_flex, h_flex, Scrollbar, v_virtual_list, VirtualListScrollHandle, TextareaState, Textarea, InputState, Input, TextView } from "gpui-base";
+import { exec, readTextFile, watchFolder, theme, settings, props, shared, setShared, spaces, panes, run, notify, openOverlay, terminals, nextCommand } from "herdr";
 import * as G from "./git.js";
 import * as C from "./comments.js";
 import { icon, menuHeight, checkbox } from "./menu.js";
 import { previewImage, pruneCache } from "./images.js";
 import { fitSize, formatBytes } from "./imageinfo.js";
 import { highlightRows, syntaxColors, Token } from "./syntax.js";
-import { wordAt, markWord } from "./words.js";
+import { wordAt, markWord, findAll, markFound } from "./words.js";
 import { HELP_WIDTH, HELP_HEIGHT } from "./diff-help.js";
 import { loadMarkdown, loadAfterText } from "./markdown.js";
 import { splitMermaid, drawDiagram, diagramKey, isDarkColor, Part } from "./mermaid.js";
@@ -58,6 +58,13 @@ const CODE_SIZE = 12, CODE_CHAR_WIDTH = CODE_SIZE * 0.6, LINE_NUMBER = 38, SIGN 
 const UNIFIED_TEXT_X = MARK + LINE_NUMBER * 2 + UNIFIED_GAP * 4 + TEXT_PAD + SIGN;
 const SPLIT_TEXT_X = MARK + LINE_NUMBER + SPLIT_GAP * 2 + TEXT_PAD;
 const mono = () => settings().font_family ?? "JetBrains Mono";
+const FOUND_ALPHA = "55", CURRENT_FOUND_ALPHA = "bb", SEARCH_BAR = 32;
+const isFindKey = (keystroke) => keystroke === "ctrl-f" || keystroke === "cmd-f";
+const matchCount = (count) => `${count} match${count === 1 ? "" : "es"}`;
+
+/** Every appearance of `query` in the code lines of `rows`, in their order; `index` is the row's place in `rows`. */
+const findMatches = (rows, query) => rows.flatMap((row, index) =>
+  C.linesOf(row).flatMap((line) => findAll(line.text, query).map(({ start }) => ({ index, line, start }))));
 
 const diffHeader = (path) => `diff --git a/${path} b/${path}`;
 const binaryLines = (path) => (G.imageType(path) ? [`Binary files /dev/null and b/${path} differ`] : ["Binary file · no text diff"]);
@@ -141,12 +148,24 @@ export class DiffView {
     this.menuActions = {}; this.menuSerial = 0; this.pickSeen = shared("git-changes.pick")?.at; this.pressSide = "right"; this.press = null;
     this.composer = TextareaState.new({ placeholder: "Comment on this line", rows: 3 });
     this.composer.on("submit", (e, cx) => { if (!e.shift) this.send(cx); });
+    this.initSearch(cx);
     this.clearRows();
     cx.spawn(async () => pruneCache());
     this.sync(cx);
     // Picks arrive through shared state, which re-renders this copy; files change under it.
     cx.timer.every(10000, (cx) => this.reload(cx));
     cx.timer.every(ANSWER_POLL_MS, (cx) => this.pollAnswers(cx));
+  }
+
+  initSearch(cx) {
+    this.handle = cx.focus_handle(); this.scroll = VirtualListScrollHandle.new();
+    this.searching = false; this.searchFocused = false; this.found = null; this.foundAt = 0;
+    this.searchBox = InputState.new({ placeholder: "Find · ↩ next · ⇧↩ previous" });
+    this.searchBox.on("change", (_e, cx) => this.find(cx));
+    this.searchBox.on("submit", (e, cx) => this.stepFound(e.shift ? -1 : 1, cx));
+    this.searchBox.on("focus", () => { this.searchFocused = true; });
+    this.searchBox.on("blur", () => { this.searchFocused = false; });
+    cx.spawn(async () => { for (;;) if (await nextCommand() === "focus") this.handle.focus(); });
   }
 
   entry() { return (shared("git-changes.view") ?? {})[this.space]; }
@@ -555,6 +574,93 @@ export class DiffView {
     });
   }
 
+  searchQuery() { return this.searching ? this.searchBox.value() : ""; }
+
+  openSearch() {
+    this.searching = true;
+    this.searchBox.set_selected_range({ start: 0, end: this.searchBox.value().length });
+    this.searchBox.focus();
+  }
+
+  closeSearch() {
+    this.searching = false;
+    this.handle.focus();
+  }
+
+  showsPreview() { return this.previewing && isMarkdownFile(this.item); }
+
+  /** The search's matches in `rows`, the diff's shown rows; kept until the rows or the text change. */
+  foundMatches(rows) {
+    const query = this.searchQuery();
+    if (this.found?.rows === rows && this.found.query === query) return this.found.list;
+    this.found = { rows, query, list: findMatches(rows, query) };
+    this.foundAt = Math.min(this.foundAt, Math.max(0, this.found.list.length - 1));
+    return this.found.list;
+  }
+
+  shownMatches() { return this.showsPreview() ? [] : this.foundMatches(this.display?.rows ?? []); }
+
+  find(cx) {
+    this.foundAt = 0;
+    this.revealFound();
+    cx.notify();
+  }
+
+  stepFound(step, cx) {
+    const count = this.shownMatches().length;
+    if (!count) return;
+    this.foundAt = (this.foundAt + step + count) % count;
+    this.revealFound();
+    cx.notify();
+  }
+
+  revealFound() {
+    const match = this.shownMatches()[this.foundAt];
+    if (match) this.scroll.scroll_to_item(match.index, "center");
+  }
+
+  isCurrentFound(line, start) {
+    const match = this.found?.list[this.foundAt];
+    return match?.line === line && match.start === start;
+  }
+
+  foundBackground(t, current) { return t.ansi3 + (current ? CURRENT_FOUND_ALPHA : FOUND_ALPHA); }
+
+  highlightFound(view, text, t) {
+    return findAll(text, this.searchQuery()).reduce((v, { start, end }) => v.highlight_range(start, end, this.foundBackground(t, false)), view);
+  }
+
+  markdownMatchCount(layout) {
+    const query = this.searchQuery();
+    return this.markdownColumns(layout).flatMap(([, text]) => (text === null ? [] : splitMermaid(text)))
+      .filter((part) => part.kind !== Part.Mermaid).reduce((count, part) => count + findAll(part.text, query).length, 0);
+  }
+
+  foundLabel(layout) {
+    if (!this.searchQuery()) return "";
+    const count = this.showsPreview() ? this.markdownMatchCount(layout) : this.found?.list.length ?? 0;
+    if (!count) return "No matches";
+    return this.showsPreview() ? matchCount(count) : `${this.foundAt + 1} of ${count}`;
+  }
+
+  searchBar(t, layout) {
+    return h_flex().id("gc-diff-search").h(SEARCH_BAR).flex_none().px(12).gap(8).items_center().border_b(1).border_color(t.border)
+      .on_mouse_down("left", (_e, cx) => { cx.stop_propagation(); this.searchBox.focus(); })
+      .child(svg(icon("search")).size(12).flex_none().text_color(t.accent))
+      .child(Input.new(this.searchBox).flex_1().min_w(0).text_size(12).text_color(t.foreground))
+      .child(div().flex_none().text_size(11).text_color(t.dim).child(this.foundLabel(layout)))
+      .child(this.headerButton(t, "search-close", "x", "Close · Esc", (_e, cx) => { this.closeSearch(); cx.notify(); }));
+  }
+
+  /** Esc closes, in order: the search while it has the keyboard, the comment box, the search, the picked word. False when nothing was open. */
+  escape() {
+    if (this.searching && (this.searchFocused || !this.target)) this.closeSearch();
+    else if (this.target) this.closeComposer();
+    else if (this.word) this.word = null;
+    else return false;
+    return true;
+  }
+
   // --- drawing ----------------------------------------------------------------
 
   toggleCell(t, { id, name, tip, on, pick }) {
@@ -676,11 +782,12 @@ export class DiffView {
   }
 
   code(element, row, plain, t) {
-    const pieces = markWord(row?.tokens ?? [{ kind: Token.Plain, text: row?.text ?? "" }], this.word?.text);
-    const colors = syntaxColors(t);
+    const marked = markWord(row?.tokens ?? [{ kind: Token.Plain, text: row?.text ?? "" }], this.word?.text);
+    const pieces = markFound(marked, this.found?.query), colors = syntaxColors(t);
     return element.text_color(row?.tokens ? t.foreground : plain)
-      .children(pieces.map(({ kind, text, match }) => div().flex_none().when(kind !== Token.Plain, (e) => e.text_color(colors[kind]))
+      .children(pieces.map(({ kind, text, match, found }) => div().flex_none().when(kind !== Token.Plain, (e) => e.text_color(colors[kind]))
         .when(match !== undefined, (e) => (this.isPickedWord(row, match) ? e.bg(t.accent + "55") : e.underline()))
+        .when(found !== undefined, (e) => e.bg(this.foundBackground(t, this.isCurrentFound(row, found))))
         .child(text)));
   }
 
@@ -908,22 +1015,26 @@ export class DiffView {
 
   markdownPart(part, id, context) {
     if (part.kind === Part.Mermaid) return this.diagramView(part.source, id, context);
-    return TextView.markdown(id, part.text).selectable().w_full();
+    return this.highlightFound(TextView.markdown(id, part.text), part.text, context.t).selectable().w_full();
   }
 
   markdownColumn(text, side, context) {
     const column = v_flex().flex_1().min_w(0).h_full(), id = `${this.listId}-md-${side}`;
     if (text === null) return column.p(MARKDOWN_PAD).text_color(context.t.dim).child(this.markdown ? "Not in this version" : "Loading preview…");
     const parts = splitMermaid(text);
-    if (!parts.some((part) => part.kind === Part.Mermaid)) return column.child(TextView.markdown(id, text).selectable().scrollable().size_full().p(MARKDOWN_PAD));
+    if (!parts.some((part) => part.kind === Part.Mermaid)) return column.child(this.highlightFound(TextView.markdown(id, text), text, context.t).selectable().scrollable().size_full().p(MARKDOWN_PAD));
     return column.child(v_flex().id(id).size_full().p(MARKDOWN_PAD).gap(MARKDOWN_GAP).overflow_y_scrollbar()
       .children(parts.map((part, i) => this.markdownPart(part, `${id}-${i}`, context))));
   }
 
+  markdownColumns(layout) {
+    const { before, after } = this.markdown ?? { before: null, after: null };
+    return layout === "split" ? [["before", before], ["after", after]] : [[after === null ? "before" : "after", after ?? before]];
+  }
+
   /** The file rendered as Markdown, its Mermaid diagrams drawn: its new version in one column, before | after in two; a deleted file shows its old version. */
   markdownBody(t, layout, cx) {
-    const { before, after } = this.markdown ?? { before: null, after: null };
-    const columns = layout === "split" ? [["before", before], ["after", after]] : [[after === null ? "before" : "after", after ?? before]];
+    const columns = this.markdownColumns(layout);
     const width = Math.floor((this.bodyWidth || 600) / columns.length) - 2 * MARKDOWN_PAD;
     return h_flex().id(`${this.listId}-preview`).flex_1().min_h(0).on_size_change((size, cx) => this.measured(size, cx))
       .children(columns.map(([side, text], i) =>
@@ -934,8 +1045,10 @@ export class DiffView {
     if (layout === "split" && !this.pairs) this.pairs = G.splitRows(this.rows);
     const { rows, keys } = this.displayRows(layout === "split" ? this.pairs : this.rows);
     const heights = this.heightsFor(rows, layout);
+    this.foundMatches(rows);
     const list = v_virtual_list(`${this.listId}-${layout}`, rows.length, heights, (i) => keys[i],
       (range) => rows.slice(range.start, range.end).map((row, i) => this.rowView(row, t, layout, keys[range.start + i]))).size_full()
+      .track_scroll(this.scroll)
       .on_item_click((key, cx) => this.clickRow(key, cx))
       .on_item_secondary_click((key, _e, cx) => this.threadMenu(key, cx));
     const pressable = div().id(`${this.listId}-rows`).size_full().on_mouse_down("left", (ev) => this.pressed(ev)).child(list);
@@ -961,22 +1074,21 @@ export class DiffView {
     this.sync(cx);
     this.takePick(cx);
     const t = theme(), layout = getLayout();
-    const root = v_flex().id("git-changes-diff").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(12.5)
+    const root = v_flex().id("git-changes-diff").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(12.5).track_focus(this.handle)
       .on_modifiers_changed((e, cx) => this.holdAlt(Boolean(e.modifiers?.alt), cx))
       .on_key_down((e, cx) => {
-        if (e.key !== "escape") return;
-        if (this.target) this.closeComposer();
-        else if (this.word) this.word = null;
-        else return;
+        if (isFindKey(e.keystroke) && this.item) this.openSearch();
+        else if (e.key !== "escape" || !this.escape()) return;
         cx.stop_propagation(); cx.notify();
       });
     if (!this.item) return root.child(div().p(16).text_color(t.dim).child("Pick a file in Changes to see its diff here."));
-    const previewing = this.previewing && isMarkdownFile(this.item);
+    const body = this.showsPreview() ? this.markdownBody(t, layout, cx) : this.diffBody(t, layout);
     return root.child(this.header(t, layout))
+      .when(this.searching, (e) => e.child(this.searchBar(t, layout)))
       .when(layout === "split", (e) => e.child(h_flex().h(22).flex_none().items_center().border_b(1).border_color(t.border).text_size(11).text_color(t.muted)
         .child(div().flex_1().px(12).child("Before")).child(div().flex_1().px(12).border_l(1).border_color(t.border).child("After"))))
       .when(Boolean(this.error), (e) => e.child(div().px(12).py(8).text_color(t.ansi1).child(this.error)))
-      .child(previewing ? this.markdownBody(t, layout, cx) : this.diffBody(t, layout));
+      .child(body);
   }
 }
 

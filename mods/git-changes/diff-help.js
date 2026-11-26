@@ -11,6 +11,12 @@ Shows the changes of the picked file, commit, stash or branch.
 - In a diff of many files, click a file's header to fold it.
 - On a hunk header, **↑ 10** shows 10 more unchanged lines above the change and **↓ 10** 10 more below the change before it. The arrow to a line beside each shows all the hidden lines in that direction.
 
+### Find
+- **Ctrl+F** opens a find bar. Each match, in any case, gets a yellow background.
+- **Enter** goes to the next match and **Shift+Enter** to the one before. The current match has a stronger background.
+- In the Markdown preview, the matches are marked but the view doesn't scroll to them.
+- **Esc** closes the bar. Ctrl+F opens it again with the same text.
+
 ### Comments start a chat session
 - **Click a line** to write a comment under it. **Enter** sends, **Shift+Enter** starts a new line, **Esc** closes the box.
 - The comment starts a copy of your Claude Code session as a sub-agent, or the agent picked with the comment button in the header. Its answer shows under the line.

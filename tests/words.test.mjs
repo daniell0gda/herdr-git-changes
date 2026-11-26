@@ -1,6 +1,6 @@
 // Tests finding the word under the pointer and marking its other appearances in a line.
 // Nothing here needs Herdr or git. Run: node tests/words.test.mjs
-import { wordAt, wordStarts, markWord } from "../mods/git-changes/words.js";
+import { wordAt, wordStarts, markWord, findAll, markFound } from "../mods/git-changes/words.js";
 import assert from "node:assert/strict";
 
 let passed = 0;
@@ -47,6 +47,22 @@ test("no word, or a word that is not in the line, leaves the tokens as they are"
   const tokens = [{ kind: "plain", text: "a b" }];
   assert.equal(markWord(tokens, null), tokens);
   assert.equal(markWord(tokens, "zzz"), tokens);
+});
+
+test("finding text ignores case and treats signs as plain text", () => {
+  assert.deepEqual(findAll("Total = total(x) + TOTAL", "total"), [{ start: 0, end: 5 }, { start: 8, end: 13 }, { start: 19, end: 24 }]);
+  assert.deepEqual(findAll("a.b(c) a*b", "a.b("), [{ start: 0, end: 4 }]);
+  assert.deepEqual(findAll("Größe größe", "GRÖSSE"), [], "no folding that changes the length");
+  assert.deepEqual(findAll("Größe größe", "GRÖßE"), [{ start: 0, end: 5 }, { start: 6, end: 11 }]);
+  assert.deepEqual(findAll("anything", ""), []);
+});
+
+test("marking found text keeps the word marks and the token kinds, and loses no text", () => {
+  const tokens = markWord([{ kind: "keyword", text: "const " }, { kind: "plain", text: "row = Rows[row];" }], "row");
+  const marked = markFound(tokens, "ROW");
+  assert.equal(marked.map((p) => p.text).join(""), "const row = Rows[row];");
+  assert.deepEqual(marked.filter((p) => p.found !== undefined).map((p) => [p.text, p.found, p.match]), [["row", 6, 6], ["Row", 12, undefined], ["row", 17, 17]]);
+  assert.equal(markFound(tokens, null), tokens, "no search leaves the tokens as they are");
 });
 
 console.log(`\n${passed} passed${process.exitCode ? ", some failed" : ""}`);
